@@ -1,0 +1,7 @@
+{
+  "name": "CONTROLE DE OBRA",
+  "description": "Sistema Inteligente de Gestão de Obra Pública para Engenharia Civil",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
