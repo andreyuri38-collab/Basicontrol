@@ -13,35 +13,36 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Database Configuration
-const isPostgres = !!process.env.DATABASE_URL;
+const DATABASE_URL = process.env.DATABASE_URL;
+const isPostgres = !!DATABASE_URL && DATABASE_URL.startsWith('postgres');
 let sqliteDb: any = null;
 let pgPool: Pool | null = null;
 let dbStatus = "SQLite (Local/Temporário)";
 
 if (isPostgres) {
   pgPool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false },
-    connectionTimeoutMillis: 10000, // 10 seconds
+    connectionTimeoutMillis: 10000,
     idleTimeoutMillis: 30000,
     max: 10
   });
   
-  // Test connection
   try {
     const client = await pgPool.connect();
-    console.log("✅ CONECTADO AO POSTGRESQL (SUPABASE) COM SUCESSO!");
+    console.log("✅ DATABASE: PostgreSQL (Supabase) conectado com sucesso!");
     dbStatus = "PostgreSQL (Supabase/Persistente)";
     client.release();
   } catch (err: any) {
-    console.error("❌ ERRO DE CONEXÃO SUPABASE:", err.message);
-    console.log("⚠️ DATABASE_URL detectada, mas a conexão falhou. Verifique a senha e o link.");
-    // We do NOT fallback to SQLite if the user intended to use Postgres to avoid data loss confusion
-    process.exit(1); 
+    console.error("❌ ERRO CRÍTICO NO POSTGRESQL:", err.message);
+    console.log("⚠️ O sistema tentará usar SQLite como fallback de emergência, mas os dados não serão salvos no Supabase.");
+    isPostgres = false; // Fallback to sqlite if connection fails
   }
-} else {
+}
+
+if (!isPostgres) {
   sqliteDb = new Database("obra_control.db");
-  console.log("Using SQLite (Local/Development) - DATA WILL BE LOST ON RESTART");
+  console.log("ℹ️ DATABASE: Usando SQLite (Local). Para persistência real, configure DATABASE_URL.");
 }
 
 // Unified Database Interface
@@ -261,6 +262,16 @@ async function initDb() {
       observacoes TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS estoque (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      descricao TEXT UNIQUE NOT NULL,
+      quantidade_atual REAL DEFAULT 0,
+      quantidade_minima REAL DEFAULT 0,
+      unidade_medida TEXT,
+      tipo_item TEXT, -- INSUMO, FERRAMENTA
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Migrations
@@ -272,6 +283,7 @@ async function initDb() {
   try { await db.exec("ALTER TABLE servicos_ambiente ADD COLUMN descricao TEXT;"); } catch(e) {}
   try { await db.exec("ALTER TABLE atividades ADD COLUMN descricao TEXT;"); } catch(e) {}
   try { await db.exec("ALTER TABLE atividades ADD COLUMN quantidade_padrao REAL DEFAULT 1;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN status TEXT DEFAULT 'Ativo';"); } catch(e) {}
 
   // Default Admin
   const admin = await db.queryOne("SELECT * FROM users WHERE username = 'Engenheiro1'");
@@ -888,25 +900,26 @@ async function startServer() {
   });
 
   app.get("/api/atividades", async (req, res) => {
-    const { grupo_id } = req.query;
-    let sql = "SELECT a.*, g.nome_grupo FROM atividades a JOIN grupos_atividade g ON a.grupo_activity_id = g.id";
-    // Fix typo in join if needed, but I'll use the correct column name from my schema
-    sql = "SELECT a.*, g.nome_grupo FROM atividades a JOIN grupos_atividade g ON a.grupo_atividade_id = g.id";
+    const { grupo_id, status, prazo_max } = req.query;
+    let sql = "SELECT a.*, g.nome_grupo FROM atividades a JOIN grupos_atividade g ON a.grupo_atividade_id = g.id WHERE 1=1";
     const params = [];
-    if (grupo_id) { sql += " WHERE a.grupo_atividade_id = ?"; params.push(grupo_id); }
+    if (grupo_id) { sql += " AND a.grupo_atividade_id = ?"; params.push(grupo_id); }
+    if (status) { sql += " AND a.status = ?"; params.push(status); }
+    if (prazo_max) { sql += " AND a.prazo_execucao <= ?"; params.push(prazo_max); }
+    sql += " ORDER BY a.nome_atividade";
     const data = await db.query(sql, params);
     res.json(data);
   });
   app.post("/api/atividades", requireAdmin, async (req, res) => {
-    const { grupo_atividade_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao } = req.body;
-    const info = await db.run("INSERT INTO atividades (grupo_atividade_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-      [grupo_atividade_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao]);
+    const { grupo_atividade_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status } = req.body;
+    const info = await db.run("INSERT INTO atividades (grupo_atividade_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+      [grupo_atividade_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao || 1, status || 'Ativo']);
     res.json({ id: info.lastInsertRowid });
   });
   app.put("/api/atividades/:id", requireAdmin, async (req, res) => {
-    const { nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao } = req.body;
-    await db.run("UPDATE atividades SET nome_atividade = ?, unidade_medida = ?, prazo_execucao = ?, produtividade_profissional = ?, valor_parametro = ?, tipo_pagamento = ?, descricao = ?, quantidade_padrao = ? WHERE id = ?", 
-      [nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, req.params.id]);
+    const { grupo_atividade_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status } = req.body;
+    await db.run("UPDATE atividades SET grupo_atividade_id = ?, nome_atividade = ?, unidade_medida = ?, prazo_execucao = ?, produtividade_profissional = ?, valor_parametro = ?, tipo_pagamento = ?, descricao = ?, quantidade_padrao = ?, status = ? WHERE id = ?", 
+      [grupo_atividade_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status, req.params.id]);
     res.json({ success: true });
   });
   app.delete("/api/atividades/:id", requireAdmin, async (req, res) => {
@@ -1033,6 +1046,38 @@ async function startServer() {
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
+  });
+
+  // --- ESTOQUE ---
+  app.get("/api/estoque", async (req, res) => {
+    const items = await db.query("SELECT * FROM estoque ORDER BY descricao");
+    res.json(items);
+  });
+
+  app.get("/api/estoque/alertas", async (req, res) => {
+    const alerts = await db.query("SELECT * FROM estoque WHERE quantidade_atual < quantidade_minima");
+    res.json(alerts);
+  });
+
+  app.post("/api/estoque", requireAdmin, async (req, res) => {
+    const { descricao, quantidade_atual, quantidade_minima, unidade_medida, tipo_item } = req.body;
+    try {
+      const info = await db.run("INSERT INTO estoque (descricao, quantidade_atual, quantidade_minima, unidade_medida, tipo_item) VALUES (?, ?, ?, ?, ?)",
+        [descricao, quantidade_atual, quantidade_minima, unidade_medida, tipo_item]);
+      res.json({ id: info.lastInsertRowid });
+    } catch (e) { res.status(400).json({ error: "Item já existe ou erro no cadastro" }); }
+  });
+
+  app.put("/api/estoque/:id", requireAdmin, async (req, res) => {
+    const { descricao, quantidade_atual, quantidade_minima, unidade_medida, tipo_item } = req.body;
+    await db.run("UPDATE estoque SET descricao = ?, quantidade_atual = ?, quantidade_minima = ?, unidade_medida = ?, tipo_item = ? WHERE id = ?",
+      [descricao, quantidade_atual, quantidade_minima, unidade_medida, tipo_item, req.params.id]);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/estoque/:id", requireAdmin, async (req, res) => {
+    await db.run("DELETE FROM estoque WHERE id = ?", [req.params.id]);
+    res.json({ success: true });
   });
 
   // Vite

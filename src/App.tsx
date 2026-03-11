@@ -18,7 +18,8 @@ import {
   ShieldCheck,
   Briefcase,
   Map,
-  Activity
+  Activity,
+  Package
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Dashboard from './components/Dashboard';
@@ -32,8 +33,9 @@ import Login from './components/Login';
 import ConstructionParameters from './components/ConstructionParameters';
 import Activities from './components/Activities';
 import DailyTasks from './components/DailyTasks';
+import Inventory from './components/Inventory';
 
-type Module = 'dashboard' | 'employees' | 'frequency' | 'payroll' | 'signatures' | 'permissions' | 'roles' | 'parameters' | 'activities' | 'tasks';
+type Module = 'dashboard' | 'employees' | 'frequency' | 'payroll' | 'signatures' | 'permissions' | 'roles' | 'parameters' | 'activities' | 'tasks' | 'inventory';
 
 export default function App() {
   const [user, setUser] = useState<any>(JSON.parse(localStorage.getItem('user') || 'null'));
@@ -80,6 +82,7 @@ export default function App() {
     { id: 'roles', label: 'Cargos', icon: Briefcase },
     { id: 'parameters', label: 'Parâmetros', icon: Map },
     { id: 'activities', label: 'Atividades', icon: Activity },
+    { id: 'inventory', label: 'Estoque', icon: Package },
     { id: 'tasks', label: 'Tarefa', icon: CalendarCheck },
     { id: 'frequency', label: 'Frequência', icon: CalendarCheck },
     { id: 'payroll', label: 'Folha Salarial', icon: Banknote },
@@ -237,6 +240,7 @@ export default function App() {
                 {activeModule === 'roles' && <Roles userRole={user.role} />}
                 {activeModule === 'parameters' && <ConstructionParameters />}
                 {activeModule === 'activities' && <Activities />}
+                {activeModule === 'inventory' && <Inventory />}
                 {activeModule === 'tasks' && <DailyTasks />}
                 {activeModule === 'frequency' && <Frequency userRole={user.role} />}
                 {activeModule === 'payroll' && <Payroll userRole={user.role} />}

@@ -51,6 +51,8 @@ export default function Activities() {
   
   const [selectedGroup, setSelectedGroup] = useState<number | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<number | null>(null);
+  const [filterStatus, setFilterStatus] = useState<string>('');
+  const [filterPrazo, setFilterPrazo] = useState<string>('');
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState<'group' | 'activity' | 'composition'>('group');
@@ -62,9 +64,9 @@ export default function Activities() {
   }, []);
 
   useEffect(() => {
-    fetchActivities(selectedGroup);
+    fetchActivities(selectedGroup, filterStatus, filterPrazo);
     setSelectedActivity(null);
-  }, [selectedGroup]);
+  }, [selectedGroup, filterStatus, filterPrazo]);
 
   useEffect(() => {
     if (selectedActivity) fetchCompositions(selectedActivity);
@@ -76,8 +78,11 @@ export default function Activities() {
     setGroups(await res.json());
   };
 
-  const fetchActivities = async (groupId: number | null) => {
-    const url = groupId ? `/api/atividades?grupo_id=${groupId}` : '/api/atividades';
+  const fetchActivities = async (groupId: number | null, status: string, prazo: string) => {
+    let url = '/api/atividades?';
+    if (groupId) url += `grupo_id=${groupId}&`;
+    if (status) url += `status=${status}&`;
+    if (prazo) url += `prazo_max=${prazo}&`;
     const res = await fetch(url);
     setActivities(await res.json());
   };
@@ -116,7 +121,7 @@ export default function Activities() {
       setFormData({});
       setEditingId(null);
       if (modalType === 'group') fetchGroups();
-      if (modalType === 'activity') fetchActivities(selectedGroup);
+      if (modalType === 'activity') fetchActivities(selectedGroup, filterStatus, filterPrazo);
       if (modalType === 'composition') fetchCompositions(selectedActivity!);
     }
   };
@@ -136,7 +141,7 @@ export default function Activities() {
 
     if (res.ok) {
       if (type === 'group') { fetchGroups(); setSelectedGroup(null); }
-      if (type === 'activity') { fetchActivities(selectedGroup); setSelectedActivity(null); }
+      if (type === 'activity') { fetchActivities(selectedGroup, filterStatus, filterPrazo); setSelectedActivity(null); }
       if (type === 'composition') { fetchCompositions(selectedActivity!); }
     }
   };
@@ -215,16 +220,39 @@ export default function Activities() {
                 </button>
               )}
             </div>
-            <select 
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
-              value={selectedGroup || ''}
-              onChange={(e) => setSelectedGroup(e.target.value ? Number(e.target.value) : null)}
-            >
-              <option value="">Todos os Grupos</option>
-              {groups.map(g => (
-                <option key={g.id} value={g.id}>{g.nome_grupo}</option>
-              ))}
-            </select>
+            
+            <div className="grid grid-cols-1 gap-2">
+              <select 
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
+                value={selectedGroup || ''}
+                onChange={(e) => setSelectedGroup(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">Todos os Grupos</option>
+                {groups.map(g => (
+                  <option key={g.id} value={g.id}>{g.nome_grupo}</option>
+                ))}
+              </select>
+              
+              <div className="grid grid-cols-2 gap-2">
+                <select 
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
+                  value={filterStatus}
+                  onChange={(e) => setFilterStatus(e.target.value)}
+                >
+                  <option value="">Todos Status</option>
+                  <option value="Ativo">Ativo</option>
+                  <option value="Inativo">Inativo</option>
+                  <option value="Pendente">Pendente</option>
+                </select>
+                <input 
+                  type="number"
+                  placeholder="Prazo máx."
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500"
+                  value={filterPrazo}
+                  onChange={(e) => setFilterPrazo(e.target.value)}
+                />
+              </div>
+            </div>
           </div>
           <div className="p-2 space-y-1">
             {activities.map(a => (
@@ -234,8 +262,13 @@ export default function Activities() {
                   className={`w-full text-left px-4 py-3 rounded-xl transition-all flex items-center justify-between ${selectedActivity === a.id ? 'bg-emerald-50 text-emerald-700' : 'hover:bg-slate-50 text-slate-600'}`}
                 >
                   <div>
-                    <span className="font-medium block">{a.nome_atividade}</span>
-                    <span className="text-[10px] uppercase font-bold opacity-60">{a.tipo_pagamento} - {a.unidade_medida}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium block">{a.nome_atividade}</span>
+                      <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase ${a.status === 'Ativo' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
+                        {a.status || 'Ativo'}
+                      </span>
+                    </div>
+                    <span className="text-[10px] uppercase font-bold opacity-60">{a.tipo_pagamento} - {a.unidade_medida} - {a.prazo_execucao}d</span>
                   </div>
                   <ChevronRight size={16} className={`transition-transform ${selectedActivity === a.id ? 'rotate-90' : 'opacity-0 group-hover:opacity-100'}`} />
                 </button>
@@ -392,6 +425,7 @@ export default function Activities() {
                         onChange={e => setFormData({ ...formData, unidade_medida: e.target.value })}
                       />
                     </div>
+                  <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label className="text-sm font-semibold text-slate-700">Tipo Pagamento</label>
                       <select 
@@ -406,6 +440,20 @@ export default function Activities() {
                         <option value="TAREFA">TAREFA</option>
                       </select>
                     </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">Status</label>
+                      <select 
+                        required
+                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                        value={formData.status || 'Ativo'}
+                        onChange={e => setFormData({ ...formData, status: e.target.value })}
+                      >
+                        <option value="Ativo">Ativo</option>
+                        <option value="Inativo">Inativo</option>
+                        <option value="Pendente">Pendente</option>
+                      </select>
+                    </div>
+                  </div>
                   </div>
                   <div className="grid grid-cols-3 gap-4">
                     <div className="space-y-2">

@@ -28,6 +28,8 @@ import {
   AreaChart,
   Area
 } from 'recharts';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import CloudSync from './CloudSync';
 
 export default function Dashboard() {
@@ -82,17 +84,95 @@ export default function Dashboard() {
 
   const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444'];
 
+  const generatePDFReport = async () => {
+    const doc = new jsPDF();
+    const date = new Date().toLocaleDateString('pt-BR');
+    
+    // Header
+    doc.setFontSize(20);
+    doc.setTextColor(16, 185, 129); // emerald-500
+    doc.text('Relatório de Progresso da Obra', 14, 22);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100, 116, 139); // slate-500
+    doc.text(`Gerado em: ${date}`, 14, 30);
+    doc.text(`Progresso Geral: ${stats.globalProgress}%`, 14, 35);
+    
+    // Summary Table
+    autoTable(doc, {
+      startY: 45,
+      head: [['Métrica', 'Valor']],
+      body: [
+        ['Progresso Global', `${stats.globalProgress}%`],
+        ['Funcionários Ativos', stats.activeEmployees.toString()],
+        ['Custo Mão de Obra (Mês)', `R$ ${stats.currentMonthCost.toLocaleString()}`],
+        ['Taxa de Presença', `${stats.attendanceRate}%`],
+      ],
+      theme: 'striped',
+      headStyles: { fillColor: [16, 185, 129] }
+    });
+
+    // Sectors Progress
+    doc.setFontSize(14);
+    doc.setTextColor(30, 41, 59); // slate-800
+    doc.text('Progresso por Setor', 14, (doc as any).lastAutoTable.finalY + 15);
+    
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 20,
+      head: [['Setor', 'Progresso (%)']],
+      body: progressDetails.sectors.map((s: any) => [s.name, `${s.percent}%`]),
+    });
+
+    // Potential Bottlenecks (Low Progress)
+    const bottlenecks = progressDetails.environments.filter((e: any) => e.percent < 30);
+    if (bottlenecks.length > 0) {
+      doc.setFontSize(14);
+      doc.setTextColor(239, 68, 68); // red-500
+      doc.text('Possíveis Gargalos (Ambientes com baixo progresso)', 14, (doc as any).lastAutoTable.finalY + 15);
+      
+      autoTable(doc, {
+        startY: (doc as any).lastAutoTable.finalY + 20,
+        head: [['Ambiente', 'Progresso (%)']],
+        body: bottlenecks.map((e: any) => [e.name, `${e.percent}%`]),
+        headStyles: { fillColor: [239, 68, 68] }
+      });
+    }
+
+    // Recent Notifications
+    doc.setFontSize(14);
+    doc.setTextColor(30, 41, 59);
+    doc.text('Alertas e Notificações Recentes', 14, (doc as any).lastAutoTable.finalY + 15);
+    
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 20,
+      head: [['Título', 'Mensagem', 'Data/Hora']],
+      body: extendedData.notifications.map((n: any) => [n.title, n.message, n.time]),
+    });
+
+    doc.save(`Relatorio_Obra_${date.replace(/\//g, '-')}.pdf`);
+  };
+
   return (
     <div className="space-y-8">
       {/* Quick Stats */}
       <div className="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className={`w-3 h-3 rounded-full ${stats.dbStatus.includes('Persistente') ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></div>
-          <span className="text-sm font-bold text-slate-700">Banco de Dados: <span className={stats.dbStatus.includes('Persistente') ? 'text-emerald-600' : 'text-amber-600'}>{stats.dbStatus}</span></span>
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3">
+            <div className={`w-3 h-3 rounded-full ${stats.dbStatus.includes('Persistente') ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></div>
+            <span className="text-sm font-bold text-slate-700">Banco de Dados: <span className={stats.dbStatus.includes('Persistente') ? 'text-emerald-600' : 'text-amber-600'}>{stats.dbStatus}</span></span>
+          </div>
+          {!stats.dbStatus.includes('Persistente') && (
+            <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded-full uppercase">Aviso: Dados Temporários</span>
+          )}
         </div>
-        {!stats.dbStatus.includes('Persistente') && (
-          <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded-full uppercase">Aviso: Dados Temporários</span>
-        )}
+        
+        <button 
+          onClick={generatePDFReport}
+          className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition-all font-bold text-xs shadow-lg shadow-slate-900/20"
+        >
+          <Shield size={16} className="text-emerald-400" />
+          Gerar Relatório PDF
+        </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

@@ -13,7 +13,8 @@ import {
   PieChart,
   Copy,
   Package,
-  Wrench
+  Wrench,
+  AlertTriangle
 } from 'lucide-react';
 
 interface Sector {
@@ -79,12 +80,14 @@ export default function ConstructionParameters() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [expandedServiceId, setExpandedServiceId] = useState<number | null>(null);
   const [serviceMaterials, setServiceMaterials] = useState<Material[]>([]);
+  const [stockAlerts, setStockAlerts] = useState<any[]>([]);
   
   const [formData, setFormData] = useState<any>({});
 
   useEffect(() => {
     fetchSetores();
     fetchActivities();
+    fetchStockAlerts();
   }, []);
 
   useEffect(() => {
@@ -125,6 +128,11 @@ export default function ConstructionParameters() {
   const fetchActivities = async () => {
     const res = await fetch('/api/atividades');
     setActivities(await res.json());
+  };
+
+  const fetchStockAlerts = async () => {
+    const res = await fetch('/api/estoque/alertas');
+    setStockAlerts(await res.json());
   };
 
   const fetchMaterials = async (serviceId: number) => {
@@ -250,6 +258,25 @@ export default function ConstructionParameters() {
 
   return (
     <div className="space-y-6">
+      {stockAlerts.length > 0 && (
+        <div className="bg-red-50 border border-red-100 rounded-2xl p-4 flex items-start gap-4 animate-in fade-in slide-in-from-top-4">
+          <div className="p-2 bg-red-100 text-red-600 rounded-xl">
+            <AlertTriangle size={24} />
+          </div>
+          <div className="flex-1">
+            <h4 className="font-bold text-red-900">Alertas de Estoque</h4>
+            <p className="text-sm text-red-700 mb-2">Os seguintes itens estão abaixo da quantidade mínima recomendada:</p>
+            <div className="flex flex-wrap gap-2">
+              {stockAlerts.map(alert => (
+                <span key={alert.id} className="text-[10px] font-bold bg-white border border-red-200 text-red-600 px-2 py-1 rounded-lg uppercase">
+                  {alert.descricao}: {alert.quantidade_atual} {alert.unidade_medida} (Mín: {alert.quantidade_minima})
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Parâmetros Construtivos</h2>
