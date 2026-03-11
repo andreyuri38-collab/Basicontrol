@@ -36,11 +36,15 @@ if (isPostgres) {
   } catch (err: any) {
     console.error("❌ ERRO CRÍTICO NO POSTGRESQL:", err.message);
     console.log("⚠️ O sistema tentará usar SQLite como fallback de emergência, mas os dados não serão salvos no Supabase.");
-    isPostgres = false; // Fallback to sqlite if connection fails
+    // We keep isPostgres as true to avoid logic issues, but sqliteDb will be used if pgPool fails
+    // Actually, let's fix the logic to use a let variable for isPostgres if we want to toggle it
   }
 }
 
-if (!isPostgres) {
+let effectivePostgres = isPostgres;
+if (isPostgres && !pgPool) effectivePostgres = false;
+
+if (!effectivePostgres) {
   sqliteDb = new Database("obra_control.db");
   console.log("ℹ️ DATABASE: Usando SQLite (Local). Para persistência real, configure DATABASE_URL.");
 }
@@ -48,14 +52,14 @@ if (!isPostgres) {
 // Unified Database Interface
 const db = {
   async exec(sql: string) {
-    if (isPostgres) {
+    if (effectivePostgres) {
       await pgPool!.query(sql);
     } else {
       sqliteDb.exec(sql);
     }
   },
   async query(sql: string, params: any[] = []) {
-    if (isPostgres) {
+    if (effectivePostgres) {
       // Convert ? to $1, $2, etc for Postgres
       let count = 0;
       const pgSql = sql.replace(/\?/g, () => `$${++count}`);
@@ -70,7 +74,7 @@ const db = {
     return rows[0] || null;
   },
   async run(sql: string, params: any[] = []) {
-    if (isPostgres) {
+    if (effectivePostgres) {
       let count = 0;
       const pgSql = sql.replace(/\?/g, () => `$${++count}`);
       const result = await pgPool!.query(pgSql, params);
@@ -82,7 +86,7 @@ const db = {
   },
   // Special helper for SQLite backup which doesn't exist in PG
   async backup(path: string) {
-    if (!isPostgres) {
+    if (!effectivePostgres) {
       await sqliteDb.backup(path);
     } else {
       throw new Error("Backup not supported on PostgreSQL via this method");
@@ -92,12 +96,12 @@ const db = {
 
 // Initialize Database Schema
 async function initDb() {
-  const autoIncrement = isPostgres ? "SERIAL" : "INTEGER PRIMARY KEY AUTOINCREMENT";
-  const pk = isPostgres ? "PRIMARY KEY" : "";
+  const autoIncrement = effectivePostgres ? "SERIAL" : "INTEGER PRIMARY KEY AUTOINCREMENT";
+  const pk = effectivePostgres ? "PRIMARY KEY" : "";
   
   await db.exec(`
     CREATE TABLE IF NOT EXISTS users (
-      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      id ${effectivePostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'viewer',
@@ -270,6 +274,14 @@ async function initDb() {
       quantidade_minima REAL DEFAULT 0,
       unidade_medida TEXT,
       tipo_item TEXT, -- INSUMO, FERRAMENTA
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS checklists (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      task TEXT NOT NULL,
+      category TEXT DEFAULT 'Geral',
+      status TEXT DEFAULT 'Pendente',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -1077,6 +1089,29 @@ async function startServer() {
 
   app.delete("/api/estoque/:id", requireAdmin, async (req, res) => {
     await db.run("DELETE FROM estoque WHERE id = ?", [req.params.id]);
+    res.json({ success: true });
+  });
+
+  // --- CHECKLIST ---
+  app.get("/api/checklists", async (req, res) => {
+    const items = await db.query("SELECT * FROM checklists ORDER BY created_at DESC");
+    res.json(items);
+  });
+
+  app.post("/api/checklists", async (req, res) => {
+    const { task, category } = req.body;
+    const info = await db.run("INSERT INTO checklists (task, category) VALUES (?, ?)", [task, category]);
+    res.json({ id: info.lastInsertRowid });
+  });
+
+  app.put("/api/checklists/:id", async (req, res) => {
+    const { status } = req.body;
+    await db.run("UPDATE checklists SET status = ? WHERE id = ?", [status, req.params.id]);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/checklists/:id", requireAdmin, async (req, res) => {
+    await db.run("DELETE FROM checklists WHERE id = ?", [req.params.id]);
     res.json({ success: true });
   });
 

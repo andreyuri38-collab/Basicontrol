@@ -10,7 +10,11 @@ import {
   Bell,
   AlertTriangle,
   CheckCircle2,
-  Clock
+  Clock,
+  Package,
+  CheckSquare,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -54,6 +58,9 @@ export default function Dashboard() {
     notifications: []
   });
 
+  const [checklists, setChecklists] = useState<any[]>([]);
+  const [newTask, setNewTask] = useState('');
+
   useEffect(() => {
     fetch('/api/stats')
       .then(res => res.json())
@@ -66,7 +73,44 @@ export default function Dashboard() {
     fetch('/api/dashboard-extended')
       .then(res => res.json())
       .then(setExtendedData);
+
+    fetchChecklists();
   }, []);
+
+  const fetchChecklists = () => {
+    fetch('/api/checklists')
+      .then(res => res.json())
+      .then(setChecklists);
+  };
+
+  const addChecklistItem = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTask.trim()) return;
+    fetch('/api/checklists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: newTask, category: 'Geral' })
+    }).then(() => {
+      setNewTask('');
+      fetchChecklists();
+    });
+  };
+
+  const toggleChecklist = (id: number, currentStatus: string) => {
+    const newStatus = currentStatus === 'Concluído' ? 'Pendente' : 'Concluído';
+    fetch(`/api/checklists/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus })
+    }).then(fetchChecklists);
+  };
+
+  const deleteChecklistItem = (id: number) => {
+    fetch(`/api/checklists/${id}`, {
+      method: 'DELETE',
+      headers: { 'x-user-role': 'admin' }
+    }).then(fetchChecklists);
+  };
 
   const costData = [
     { name: 'Jan', value: 45000 },
@@ -207,6 +251,40 @@ export default function Dashboard() {
         />
       </div>
 
+      {/* Module Overview KPIs */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
+          <div className="p-3 bg-amber-50 text-amber-600 rounded-xl">
+            <Package size={24} />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-slate-400 uppercase">Status Estoque</p>
+            <h4 className="text-lg font-bold text-slate-900">3 Itens em Alerta</h4>
+          </div>
+          <ArrowUpRight size={20} className="ml-auto text-amber-500" />
+        </div>
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
+          <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl">
+            <CheckCircle2 size={24} />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-slate-400 uppercase">Atividades Ativas</p>
+            <h4 className="text-lg font-bold text-slate-900">12 em Execução</h4>
+          </div>
+          <ArrowUpRight size={20} className="ml-auto text-indigo-500" />
+        </div>
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
+          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
+            <DollarSign size={24} />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-slate-400 uppercase">Eficiência Financeira</p>
+            <h4 className="text-lg font-bold text-slate-900">98.2% do Orçado</h4>
+          </div>
+          <ArrowDownRight size={20} className="ml-auto text-emerald-500" />
+        </div>
+      </div>
+
       {/* Progress Breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
@@ -338,7 +416,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Notifications & Security */}
+      {/* Notifications & Checklist */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
           <div className="flex items-center justify-between mb-6">
@@ -378,6 +456,54 @@ export default function Dashboard() {
         </div>
 
         <div className="lg:col-span-1 space-y-8">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <CheckSquare size={20} className="text-indigo-500" /> Checklist da Obra
+              </h3>
+            </div>
+            
+            <form onSubmit={addChecklistItem} className="flex gap-2 mb-6">
+              <input 
+                type="text" 
+                placeholder="Nova tarefa..."
+                className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                value={newTask}
+                onChange={e => setNewTask(e.target.value)}
+              />
+              <button type="submit" className="p-2 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600">
+                <Plus size={20} />
+              </button>
+            </form>
+
+            <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+              {checklists.map(item => (
+                <div key={item.id} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100 group">
+                  <button 
+                    onClick={() => toggleChecklist(item.id, item.status)}
+                    className={`shrink-0 w-5 h-5 rounded border flex items-center justify-center transition-colors ${
+                      item.status === 'Concluído' ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 bg-white'
+                    }`}
+                  >
+                    {item.status === 'Concluído' && <CheckCircle2 size={12} />}
+                  </button>
+                  <span className={`flex-1 text-sm font-medium ${item.status === 'Concluído' ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                    {item.task}
+                  </span>
+                  <button 
+                    onClick={() => deleteChecklistItem(item.id)}
+                    className="p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+              {checklists.length === 0 && (
+                <p className="text-center text-slate-400 text-xs italic py-8">Nenhuma tarefa pendente</p>
+              )}
+            </div>
+          </div>
+
           <CloudSync />
           
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
