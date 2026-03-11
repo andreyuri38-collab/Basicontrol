@@ -13,13 +13,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Database Configuration
-const DATABASE_URL = process.env.DATABASE_URL;
-const isPostgres = !!DATABASE_URL && DATABASE_URL.startsWith('postgres');
+let DATABASE_URL = process.env.DATABASE_URL;
+
+// Render/Supabase compatibility fix: ensure postgresql:// prefix
+if (DATABASE_URL && DATABASE_URL.startsWith('postgres://')) {
+  DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://');
+}
+
+const isPostgresAttempt = !!DATABASE_URL && DATABASE_URL.startsWith('postgresql');
 let sqliteDb: any = null;
 let pgPool: Pool | null = null;
 let dbStatus = "SQLite (Local/Temporário)";
+let effectivePostgres = false;
 
-if (isPostgres) {
+if (isPostgresAttempt) {
   pgPool = new Pool({
     connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false },
@@ -32,21 +39,23 @@ if (isPostgres) {
     const client = await pgPool.connect();
     console.log("✅ DATABASE: PostgreSQL (Supabase) conectado com sucesso!");
     dbStatus = "PostgreSQL (Supabase/Persistente)";
+    effectivePostgres = true;
     client.release();
   } catch (err: any) {
     console.error("❌ ERRO CRÍTICO NO POSTGRESQL:", err.message);
-    console.log("⚠️ O sistema tentará usar SQLite como fallback de emergência, mas os dados não serão salvos no Supabase.");
-    // We keep isPostgres as true to avoid logic issues, but sqliteDb will be used if pgPool fails
-    // Actually, let's fix the logic to use a let variable for isPostgres if we want to toggle it
+    console.log("⚠️ DATABASE_URL encontrada, mas a conexão falhou. Verifique a senha no Render.");
+    dbStatus = "Erro de Conexão (Verificar DATABASE_URL)";
+    effectivePostgres = false;
   }
 }
 
-let effectivePostgres = isPostgres;
-if (isPostgres && !pgPool) effectivePostgres = false;
+const isPostgres = effectivePostgres; // Alias for backward compatibility in the rest of the file
 
 if (!effectivePostgres) {
   sqliteDb = new Database("obra_control.db");
-  console.log("ℹ️ DATABASE: Usando SQLite (Local). Para persistência real, configure DATABASE_URL.");
+  if (!isPostgresAttempt) {
+    console.log("ℹ️ DATABASE: Usando SQLite (Local). Configure DATABASE_URL no Render para persistência.");
+  }
 }
 
 // Unified Database Interface
