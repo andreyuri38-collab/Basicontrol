@@ -35,6 +35,7 @@ import {
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import CloudSync from './CloudSync';
+import { Pagination } from './Pagination';
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -59,7 +60,10 @@ export default function Dashboard() {
   });
 
   const [checklists, setChecklists] = useState<any[]>([]);
+  const [totalChecklists, setTotalChecklists] = useState(0);
+  const [currentChecklistPage, setCurrentChecklistPage] = useState(1);
   const [newTask, setNewTask] = useState('');
+  const itemsPerPage = 20;
 
   useEffect(() => {
     fetch('/api/stats')
@@ -74,13 +78,16 @@ export default function Dashboard() {
       .then(res => res.json())
       .then(setExtendedData);
 
-    fetchChecklists();
-  }, []);
+    fetchChecklists(currentChecklistPage);
+  }, [currentChecklistPage]);
 
-  const fetchChecklists = () => {
-    fetch('/api/checklists')
+  const fetchChecklists = (page: number) => {
+    fetch(`/api/checklists?page=${page}&limit=${itemsPerPage}`)
       .then(res => res.json())
-      .then(setChecklists);
+      .then(data => {
+        setChecklists(data.data || []);
+        setTotalChecklists(data.total || 0);
+      });
   };
 
   const addChecklistItem = (e: React.FormEvent) => {
@@ -92,7 +99,7 @@ export default function Dashboard() {
       body: JSON.stringify({ task: newTask, category: 'Geral' })
     }).then(() => {
       setNewTask('');
-      fetchChecklists();
+      fetchChecklists(currentChecklistPage);
     });
   };
 
@@ -102,14 +109,14 @@ export default function Dashboard() {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus })
-    }).then(fetchChecklists);
+    }).then(() => fetchChecklists(currentChecklistPage));
   };
 
   const deleteChecklistItem = (id: number) => {
     fetch(`/api/checklists/${id}`, {
       method: 'DELETE',
       headers: { 'x-user-role': 'admin' }
-    }).then(fetchChecklists);
+    }).then(() => fetchChecklists(currentChecklistPage));
   };
 
   const costData = [
@@ -300,7 +307,19 @@ export default function Dashboard() {
                 <Tooltip 
                   cursor={{fill: '#f8fafc'}}
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                  formatter={(value: any) => [`${value}%`, 'Progresso']}
+                  formatter={(value: any, name: any, props: any) => {
+                    const data = props.payload;
+                    return [
+                      <div key="tip" className="space-y-1">
+                        <p className="font-bold text-slate-900">{data.percent}% <span className="text-[10px] text-slate-400 font-normal">(Esperado: {data.expected}%)</span></p>
+                        <p className={`text-[10px] font-bold uppercase ${
+                          data.status === 'Atrasado' ? 'text-red-500' : 
+                          data.status === 'Adiantado' ? 'text-emerald-500' : 'text-blue-500'
+                        }`}>{data.status}</p>
+                      </div>,
+                      'Status'
+                    ];
+                  }}
                 />
                 <Bar dataKey="percent" fill="#10b981" radius={[0, 4, 4, 0]} barSize={20} />
               </BarChart>
@@ -314,15 +333,26 @@ export default function Dashboard() {
           </h3>
           <div className="space-y-4 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
             {progressDetails.environments.map((e: any) => (
-              <div key={e.name} className="flex items-center gap-4">
+              <div key={e.name} className="flex items-center gap-4 p-2 rounded-xl hover:bg-slate-50 transition-colors">
                 <div className="flex-1">
                   <div className="flex justify-between text-xs font-bold mb-1">
-                    <span className="text-slate-600 truncate">{e.name}</span>
+                    <div className="flex items-center gap-2 truncate">
+                      <span className="text-slate-600 truncate">{e.name}</span>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full uppercase ${
+                        e.status === 'Atrasado' ? 'bg-red-50 text-red-600' : 
+                        e.status === 'Adiantado' ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'
+                      }`}>
+                        {e.status}
+                      </span>
+                    </div>
                     <span className="text-blue-600">{e.percent}%</span>
                   </div>
                   <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
                     <div 
-                      className="h-full bg-blue-500 transition-all duration-1000" 
+                      className={`h-full transition-all duration-1000 ${
+                        e.status === 'Atrasado' ? 'bg-red-500' : 
+                        e.status === 'Adiantado' ? 'bg-emerald-500' : 'bg-blue-500'
+                      }`}
                       style={{ width: `${e.percent}%` }}
                     ></div>
                   </div>
@@ -501,6 +531,15 @@ export default function Dashboard() {
               {checklists.length === 0 && (
                 <p className="text-center text-slate-400 text-xs italic py-8">Nenhuma tarefa pendente</p>
               )}
+            </div>
+            <div className="mt-4">
+              <Pagination 
+                currentPage={currentChecklistPage}
+                totalItems={totalChecklists}
+                itemsPerPage={itemsPerPage}
+                onPageChange={setCurrentChecklistPage}
+                compact
+              />
             </div>
           </div>
 

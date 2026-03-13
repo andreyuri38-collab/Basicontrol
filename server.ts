@@ -8,6 +8,8 @@ import bcrypt from "bcryptjs";
 import { google } from "googleapis";
 import fs from "fs";
 import { Readable } from "stream";
+import { parse, isValid, format } from "date-fns";
+import apiRoutes from './backend/routes';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,8 +45,15 @@ if (isPostgresAttempt) {
     client.release();
   } catch (err: any) {
     console.error("❌ ERRO CRÍTICO NO POSTGRESQL:", err.message);
-    console.log("⚠️ DATABASE_URL encontrada, mas a conexão falhou. Verifique a senha no Render.");
-    dbStatus = "Erro de Conexão (Verificar DATABASE_URL)";
+    
+    if (err.message.includes('ENETUNREACH') || err.message.includes('::')) {
+      console.log("⚠️ DETECTADO ERRO DE REDE (IPv6).");
+      console.log("💡 DICA: O Render não suporta IPv6 nativamente. No Supabase, use a URL do 'Connection Pooler' (Porta 6543) em vez da conexão direta (5432).");
+    } else {
+      console.log("⚠️ DATABASE_URL encontrada, mas a conexão falhou. Verifique a senha no Render.");
+    }
+    
+    dbStatus = "Erro de Rede/Senha (Verificar DATABASE_URL)";
     effectivePostgres = false;
   }
 }
@@ -57,6 +66,20 @@ if (!effectivePostgres) {
     console.log("ℹ️ DATABASE: Usando SQLite (Local). Configure DATABASE_URL no Render para persistência.");
   }
 }
+
+// Helpers
+const validateDate = (dateStr: string | undefined | null) => {
+  if (!dateStr) return true;
+  const parsed = parse(dateStr, 'yyyy-MM-dd', new Date());
+  return isValid(parsed) && format(parsed, 'yyyy-MM-dd') === dateStr;
+};
+
+const getPagination = (req: express.Request) => {
+  const page = parseInt(req.query.page as string) || 1;
+  const limit = parseInt(req.query.limit as string) || 20;
+  const offset = (page - 1) * limit;
+  return { page, limit, offset };
+};
 
 // Unified Database Interface
 const db = {
@@ -214,6 +237,12 @@ async function initDb() {
       nome_ambiente TEXT NOT NULL,
       tipo_ambiente TEXT NOT NULL, -- SALA, AREA TECNICA, AREA COMUM, MACRO
       area_total REAL,
+      piso TEXT,
+      parede TEXT,
+      teto TEXT,
+      esquadrias TEXT,
+      metais TEXT,
+      loucas TEXT,
       descricao TEXT
     );
 
@@ -239,6 +268,9 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS atividades (
       id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
       grupo_atividade_id INTEGER REFERENCES grupos_atividade(id),
+      ambiente_id INTEGER REFERENCES ambientes(id),
+      pavimento_id INTEGER REFERENCES pavimentos(id),
+      setor_id INTEGER REFERENCES setores(id),
       nome_atividade TEXT NOT NULL,
       unidade_medida TEXT,
       prazo_execucao INTEGER, -- em dias
@@ -305,6 +337,12 @@ async function initDb() {
   try { await db.exec("ALTER TABLE atividades ADD COLUMN descricao TEXT;"); } catch(e) {}
   try { await db.exec("ALTER TABLE atividades ADD COLUMN quantidade_padrao REAL DEFAULT 1;"); } catch(e) {}
   try { await db.exec("ALTER TABLE atividades ADD COLUMN status TEXT DEFAULT 'Ativo';"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN piso TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN parede TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN teto TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN esquadrias TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN metais TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN loucas TEXT;"); } catch(e) {}
 
   // Default Admin
   const admin = await db.queryOne("SELECT * FROM users WHERE username = 'Engenheiro1'");
@@ -350,6 +388,9 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
+// Modular API Routes v2 (Prisma)
+app.use('/api/v2', apiRoutes);
+
   const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const userRole = req.headers['x-user-role'];
     if (userRole === 'admin') {
@@ -386,6 +427,27 @@ async function startServer() {
     res.json({ connected: !!googleTokens });
   });
 
+  app.post("/api/factory-reset", requireAdmin, async (req, res) => {
+    try {
+      const tables = [
+        'checklists', 'estoque', 'execucao_diaria', 'atividade_dependencia', 
+        'composicao_atividade', 'atividades', 'grupos_atividade', 'servicos_ambiente', 
+        'ambientes', 'pavimentos', 'setores', 'settings', 'signatures', 
+        'documents', 'payroll', 'frequency', 'job_roles', 'employees', 'users'
+      ];
+
+      for (const table of tables) {
+        await db.exec(`DROP TABLE IF EXISTS ${table}`);
+      }
+
+      await initDb();
+      res.json({ success: true, message: "Sistema resetado com sucesso para as configurações de fábrica." });
+    } catch (error: any) {
+      console.error("Erro no factory reset:", error);
+      res.status(500).json({ error: "Erro ao resetar o sistema: " + error.message });
+    }
+  });
+
   app.post("/api/sync/google-drive/backup", async (req, res) => {
     if (isPostgres) return res.status(400).json({ error: "Backup via Google Drive só disponível em modo SQLite local." });
     if (!googleTokens) return res.status(401).json({ error: "Google Drive não conectado" });
@@ -419,8 +481,10 @@ async function startServer() {
 
   // Users
   app.get("/api/users", requireAdmin, async (req, res) => {
-    const users = await db.query("SELECT id, username, role, name, created_at FROM users");
-    res.json(users);
+    const { page, limit, offset } = getPagination(req);
+    const users = await db.query("SELECT id, username, role, name, created_at FROM users LIMIT ? OFFSET ?", [limit, offset]);
+    const total = await db.queryOne("SELECT COUNT(*) as count FROM users");
+    res.json({ data: users, total: parseInt(total.count), page, limit });
   });
 
   app.post("/api/users", requireAdmin, async (req, res) => {
@@ -439,8 +503,10 @@ async function startServer() {
 
   // Job Roles
   app.get("/api/job-roles", async (req, res) => {
-    const roles = await db.query("SELECT * FROM job_roles ORDER BY name");
-    res.json(roles);
+    const { page, limit, offset } = getPagination(req);
+    const roles = await db.query("SELECT * FROM job_roles ORDER BY name LIMIT ? OFFSET ?", [limit, offset]);
+    const total = await db.queryOne("SELECT COUNT(*) as count FROM job_roles");
+    res.json({ data: roles, total: parseInt(total.count), page, limit });
   });
 
   app.post("/api/job-roles", requireAdmin, async (req, res) => {
@@ -458,18 +524,29 @@ async function startServer() {
   });
 
   app.delete("/api/job-roles/:id", requireAdmin, async (req, res) => {
-    await db.run("DELETE FROM job_roles WHERE id = ?", [req.params.id]);
-    res.json({ success: true });
+    try {
+      await db.run("DELETE FROM job_roles WHERE id = ?", [req.params.id]);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: "Não é possível excluir este cargo pois existem funcionários vinculados a ele." });
+    }
   });
 
   // Employees
   app.get("/api/employees", async (req, res) => {
-    const employees = await db.query("SELECT * FROM employees ORDER BY name");
-    res.json(employees);
+    const { page, limit, offset } = getPagination(req);
+    const employees = await db.query("SELECT * FROM employees ORDER BY name LIMIT ? OFFSET ?", [limit, offset]);
+    const total = await db.queryOne("SELECT COUNT(*) as count FROM employees");
+    res.json({ data: employees, total: parseInt(total.count), page, limit });
   });
 
   app.post("/api/employees", requireAdmin, async (req, res) => {
     const { code, name, role, document, phone, is_registered, base_salary, admission_date, bank_name, bank_agency, bank_operation, bank_account, bank_observations, vacation_preview, photo } = req.body;
+    
+    if (!validateDate(admission_date) || !validateDate(vacation_preview)) {
+      return res.status(400).json({ error: "Formato de data inválido. Use yyyy-MM-dd." });
+    }
+
     const info = await db.run("INSERT INTO employees (code, name, role, document, phone, is_registered, base_salary, admission_date, bank_name, bank_agency, bank_operation, bank_account, bank_observations, vacation_preview, photo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
       [code, name, role, document, phone, is_registered, base_salary, admission_date, bank_name, bank_agency, bank_operation, bank_account, bank_observations, vacation_preview, photo]);
     res.json({ id: info.lastInsertRowid });
@@ -477,32 +554,48 @@ async function startServer() {
 
   app.put("/api/employees/:id", requireAdmin, async (req, res) => {
     const { code, name, role, document, phone, is_registered, base_salary, admission_date, bank_name, bank_agency, bank_operation, bank_account, bank_observations, vacation_preview, status, resignation_date, photo } = req.body;
+    
+    if (!validateDate(admission_date) || !validateDate(vacation_preview) || !validateDate(resignation_date)) {
+      return res.status(400).json({ error: "Formato de data inválido. Use yyyy-MM-dd." });
+    }
+
     await db.run("UPDATE employees SET code = ?, name = ?, role = ?, document = ?, phone = ?, is_registered = ?, base_salary = ?, admission_date = ?, bank_name = ?, bank_agency = ?, bank_operation = ?, bank_account = ?, bank_observations = ?, vacation_preview = ?, status = ?, resignation_date = ?, photo = ? WHERE id = ?",
       [code, name, role, document, phone, is_registered, base_salary, admission_date, bank_name, bank_agency, bank_operation, bank_account, bank_observations, vacation_preview, status, resignation_date, photo, req.params.id]);
     res.json({ success: true });
   });
 
   app.delete("/api/employees/:id", requireAdmin, async (req, res) => {
-    await db.run("DELETE FROM employees WHERE id = ?", [req.params.id]);
-    res.json({ success: true });
+    try {
+      await db.run("DELETE FROM employees WHERE id = ?", [req.params.id]);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: "Não é possível excluir este funcionário pois existem registros vinculados (frequência, folha, etc)." });
+    }
   });
 
   // Frequency
   app.get("/api/frequency", async (req, res) => {
     const { start, end, employee_id, role } = req.query;
+    const { page, limit, offset } = getPagination(req);
     let query = "SELECT f.*, e.name as employee_name FROM frequency f JOIN employees e ON f.employee_id = e.id WHERE 1=1";
     const params: any[] = [];
-    if (start) { query += " AND date >= ?"; params.push(start); }
-    if (end) { query += " AND date <= ?"; params.push(end); }
-    if (employee_id) { query += " AND employee_id = ?"; params.push(employee_id); }
+    if (start) { query += " AND f.date >= ?"; params.push(start); }
+    if (end) { query += " AND f.date <= ?"; params.push(end); }
+    if (employee_id) { query += " AND f.employee_id = ?"; params.push(employee_id); }
     if (role) { query += " AND e.role = ?"; params.push(role); }
-    query += " ORDER BY date DESC, e.name ASC";
+    
+    const total = await db.queryOne(`SELECT COUNT(*) as count FROM (${query}) as t`, params);
+    query += " ORDER BY f.date DESC, e.name ASC LIMIT ? OFFSET ?";
+    params.push(limit, offset);
+    
     const data = await db.query(query, params);
-    res.json(data);
+    res.json({ data, total: parseInt(total.count), page, limit });
   });
 
   app.post("/api/frequency", requireAdmin, async (req, res) => {
     const { employee_id, date, status, atestato_days, observations } = req.body;
+    if (!validateDate(date)) return res.status(400).json({ error: "Formato de data inválido. Use yyyy-MM-dd." });
+    
     if (isPostgres) {
       await db.run("INSERT INTO frequency (employee_id, date, status, atestato_days, observations) VALUES (?, ?, ?, ?, ?) ON CONFLICT (employee_id, date) DO UPDATE SET status = EXCLUDED.status, atestato_days = EXCLUDED.atestato_days, observations = EXCLUDED.observations", [employee_id, date, status, atestato_days || 0, observations]);
     } else {
@@ -518,12 +611,18 @@ async function startServer() {
   // Payroll
   app.get("/api/payroll", async (req, res) => {
     const { month, employee_id } = req.query;
+    const { page, limit, offset } = getPagination(req);
     let query = "SELECT p.*, e.name as employee_name FROM payroll p JOIN employees e ON p.employee_id = e.id WHERE 1=1";
     const params: any[] = [];
-    if (month) { query += " AND month = ?"; params.push(month); }
-    if (employee_id) { query += " AND employee_id = ?"; params.push(employee_id); }
+    if (month) { query += " AND p.month = ?"; params.push(month); }
+    if (employee_id) { query += " AND p.employee_id = ?"; params.push(employee_id); }
+    
+    const total = await db.queryOne(`SELECT COUNT(*) as count FROM (${query}) as t`, params);
+    query += " ORDER BY p.month DESC, e.name ASC LIMIT ? OFFSET ?";
+    params.push(limit, offset);
+    
     const data = await db.query(query, params);
-    res.json(data);
+    res.json({ data, total: parseInt(total.count), page, limit });
   });
 
   app.post("/api/payroll", requireAdmin, async (req, res) => {
@@ -695,14 +794,35 @@ async function startServer() {
       `);
 
       res.json({
-        sectors: sectorProgress.map((s: any) => ({
-          name: s.name,
-          percent: s.total > 0 ? Math.round((s.exec / s.total) * 100) : 0
-        })),
-        environments: envProgress.map((e: any) => ({
-          name: `${e.name} (${e.floor})`,
-          percent: e.total > 0 ? Math.round((e.exec / e.total) * 100) : 0
-        }))
+        sectors: sectorProgress.map((s: any, index: number) => {
+          const percent = s.total > 0 ? Math.round((s.exec / s.total) * 100) : 0;
+          // Simulated expected progress: base 50% +/- some variation based on index
+          const expected = 40 + (index * 7) % 40;
+          let status = 'Dentro do esperado';
+          if (percent < expected - 10) status = 'Atrasado';
+          else if (percent > expected + 10) status = 'Adiantado';
+          
+          return {
+            name: s.name,
+            percent,
+            expected,
+            status
+          };
+        }),
+        environments: envProgress.map((e: any, index: number) => {
+          const percent = e.total > 0 ? Math.round((e.exec / e.total) * 100) : 0;
+          const expected = 30 + (index * 11) % 50;
+          let status = 'Dentro do esperado';
+          if (percent < expected - 15) status = 'Atrasado';
+          else if (percent > expected + 15) status = 'Adiantado';
+
+          return {
+            name: `${e.name} (${e.floor})`,
+            percent,
+            expected,
+            status
+          };
+        })
       });
     } catch (error) {
       res.status(500).json({ error: "Erro ao buscar detalhes de progresso" });
@@ -720,8 +840,8 @@ async function startServer() {
         
         const environments = await db.query("SELECT * FROM ambientes WHERE pavimento_id = ?", [floor.id]);
         for (const env of environments) {
-          const newEnv = await db.run("INSERT INTO ambientes (setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, descricao) VALUES (?, ?, ?, ?, ?, ?)",
-            [toSectorId, newFloor.lastInsertRowid, env.nome_ambiente, env.tipo_ambiente, env.area_total, env.descricao]);
+          const newEnv = await db.run("INSERT INTO ambientes (setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [toSectorId, newFloor.lastInsertRowid, env.nome_ambiente, env.tipo_ambiente, env.area_total, env.piso, env.parede, env.teto, env.esquadrias, env.metais, env.loucas, env.descricao]);
           
           const services = await db.query("SELECT * FROM servicos_ambiente WHERE ambiente_id = ?", [env.id]);
           for (const srv of services) {
@@ -741,8 +861,8 @@ async function startServer() {
     try {
       const environments = await db.query("SELECT * FROM ambientes WHERE pavimento_id = ?", [fromFloorId]);
       for (const env of environments) {
-        const newEnv = await db.run("INSERT INTO ambientes (setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, descricao) VALUES (?, ?, ?, ?, ?, ?)",
-          [toSectorId, toFloorId, env.nome_ambiente + " (Cópia)", env.tipo_ambiente, env.area_total, env.descricao]);
+        const newEnv = await db.run("INSERT INTO ambientes (setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [toSectorId, toFloorId, env.nome_ambiente + " (Cópia)", env.tipo_ambiente, env.area_total, env.piso, env.parede, env.teto, env.esquadrias, env.metais, env.loucas, env.descricao]);
         
         const services = await db.query("SELECT * FROM servicos_ambiente WHERE ambiente_id = ?", [env.id]);
         for (const srv of services) {
@@ -787,8 +907,10 @@ async function startServer() {
   });
 
   app.get("/api/setores", async (req, res) => {
-    const data = await db.query("SELECT * FROM setores ORDER BY nome_setor");
-    res.json(data);
+    const { page, limit, offset } = getPagination(req);
+    const data = await db.query("SELECT * FROM setores ORDER BY nome_setor LIMIT ? OFFSET ?", [limit, offset]);
+    const total = await db.queryOne("SELECT COUNT(*) as count FROM setores");
+    res.json({ data, total: parseInt(total.count), page, limit });
   });
   app.post("/api/setores", requireAdmin, async (req, res) => {
     const { nome_setor, descricao } = req.body;
@@ -801,17 +923,27 @@ async function startServer() {
     res.json({ success: true });
   });
   app.delete("/api/setores/:id", requireAdmin, async (req, res) => {
-    await db.run("DELETE FROM setores WHERE id = ?", [req.params.id]);
-    res.json({ success: true });
+    try {
+      await db.run("DELETE FROM setores WHERE id = ?", [req.params.id]);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: "Não é possível excluir este setor pois existem pavimentos vinculados a ele." });
+    }
   });
 
   app.get("/api/pavimentos", async (req, res) => {
     const { setor_id } = req.query;
+    const { page, limit, offset } = getPagination(req);
     let sql = "SELECT * FROM pavimentos";
-    const params = [];
+    const params: any[] = [];
     if (setor_id) { sql += " WHERE setor_id = ?"; params.push(setor_id); }
+    
+    const total = await db.queryOne(`SELECT COUNT(*) as count FROM (${sql}) as t`, params);
+    sql += " ORDER BY nome_pavimento LIMIT ? OFFSET ?";
+    params.push(limit, offset);
+    
     const data = await db.query(sql, params);
-    res.json(data);
+    res.json({ data, total: parseInt(total.count), page, limit });
   });
   app.post("/api/pavimentos", requireAdmin, async (req, res) => {
     const { setor_id, nome_pavimento, descricao } = req.body;
@@ -824,40 +956,56 @@ async function startServer() {
     res.json({ success: true });
   });
   app.delete("/api/pavimentos/:id", requireAdmin, async (req, res) => {
-    await db.run("DELETE FROM pavimentos WHERE id = ?", [req.params.id]);
-    res.json({ success: true });
+    try {
+      await db.run("DELETE FROM pavimentos WHERE id = ?", [req.params.id]);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: "Não é possível excluir este pavimento pois existem ambientes vinculados a ele." });
+    }
   });
 
   app.get("/api/ambientes", async (req, res) => {
     const { pavimento_id, setor_id } = req.query;
+    const { page, limit, offset } = getPagination(req);
     let sql = "SELECT a.*, s.nome_setor, p.nome_pavimento FROM ambientes a JOIN setores s ON a.setor_id = s.id JOIN pavimentos p ON a.pavimento_id = p.id WHERE 1=1";
-    const params = [];
+    const params: any[] = [];
     if (pavimento_id) { sql += " AND a.pavimento_id = ?"; params.push(pavimento_id); }
     if (setor_id) { sql += " AND a.setor_id = ?"; params.push(setor_id); }
+    
+    const total = await db.queryOne(`SELECT COUNT(*) as count FROM (${sql}) as t`, params);
+    sql += " ORDER BY a.nome_ambiente LIMIT ? OFFSET ?";
+    params.push(limit, offset);
+    
     const data = await db.query(sql, params);
-    res.json(data);
+    res.json({ data, total: parseInt(total.count), page, limit });
   });
   app.post("/api/ambientes", requireAdmin, async (req, res) => {
-    const { setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, descricao } = req.body;
-    const info = await db.run("INSERT INTO ambientes (setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, descricao) VALUES (?, ?, ?, ?, ?, ?)", 
-      [setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, descricao]);
+    const { setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao } = req.body;
+    const info = await db.run("INSERT INTO ambientes (setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+      [setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao]);
     res.json({ id: info.lastInsertRowid });
   });
   app.put("/api/ambientes/:id", requireAdmin, async (req, res) => {
-    const { setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, descricao } = req.body;
-    await db.run("UPDATE ambientes SET setor_id = ?, pavimento_id = ?, nome_ambiente = ?, tipo_ambiente = ?, area_total = ?, descricao = ? WHERE id = ?", 
-      [setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, descricao, req.params.id]);
+    const { setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao } = req.body;
+    await db.run("UPDATE ambientes SET setor_id = ?, pavimento_id = ?, nome_ambiente = ?, tipo_ambiente = ?, area_total = ?, piso = ?, parede = ?, teto = ?, esquadrias = ?, metais = ?, loucas = ?, descricao = ? WHERE id = ?", 
+      [setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao, req.params.id]);
     res.json({ success: true });
   });
   app.delete("/api/ambientes/:id", requireAdmin, async (req, res) => {
-    await db.run("DELETE FROM ambientes WHERE id = ?", [req.params.id]);
-    res.json({ success: true });
+    try {
+      await db.run("DELETE FROM ambientes WHERE id = ?", [req.params.id]);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: "Não é possível excluir este ambiente pois existem serviços vinculados a ele." });
+    }
   });
 
   app.get("/api/servicos-ambiente", async (req, res) => {
     const { ambiente_id } = req.query;
-    const data = await db.query("SELECT * FROM servicos_ambiente WHERE ambiente_id = ?", [ambiente_id]);
-    res.json(data);
+    const { page, limit, offset } = getPagination(req);
+    const data = await db.query("SELECT * FROM servicos_ambiente WHERE ambiente_id = ? LIMIT ? OFFSET ?", [ambiente_id, limit, offset]);
+    const total = await db.queryOne("SELECT COUNT(*) as count FROM servicos_ambiente WHERE ambiente_id = ?", [ambiente_id]);
+    res.json({ data, total: parseInt(total.count), page, limit });
   });
 
   app.get("/api/servicos-ambiente/:id/materiais", async (req, res) => {
@@ -902,8 +1050,10 @@ async function startServer() {
 
   // --- NUCLEO 3: ATIVIDADES ---
   app.get("/api/grupos-atividade", async (req, res) => {
-    const data = await db.query("SELECT * FROM grupos_atividade ORDER BY nome_grupo");
-    res.json(data);
+    const { page, limit, offset } = getPagination(req);
+    const data = await db.query("SELECT * FROM grupos_atividade ORDER BY nome_grupo LIMIT ? OFFSET ?", [limit, offset]);
+    const total = await db.queryOne("SELECT COUNT(*) as count FROM grupos_atividade");
+    res.json({ data, total: parseInt(total.count), page, limit });
   });
   app.post("/api/grupos-atividade", requireAdmin, async (req, res) => {
     const { nome_grupo, descricao } = req.body;
@@ -916,36 +1066,70 @@ async function startServer() {
     res.json({ success: true });
   });
   app.delete("/api/grupos-atividade/:id", requireAdmin, async (req, res) => {
-    await db.run("DELETE FROM grupos_atividade WHERE id = ?", [req.params.id]);
-    res.json({ success: true });
+    try {
+      await db.run("DELETE FROM grupos_atividade WHERE id = ?", [req.params.id]);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: "Não é possível excluir este grupo pois existem atividades vinculadas a ele." });
+    }
   });
 
   app.get("/api/atividades", async (req, res) => {
-    const { grupo_id, status, prazo_max } = req.query;
-    let sql = "SELECT a.*, g.nome_grupo FROM atividades a JOIN grupos_atividade g ON a.grupo_atividade_id = g.id WHERE 1=1";
-    const params = [];
+    const { grupo_id, status, prazo_max, ambiente_id, pavimento_id, setor_id } = req.query;
+    const { page, limit, offset } = getPagination(req);
+    let sql = `
+      SELECT a.*, g.nome_grupo, amb.nome_ambiente, p.nome_pavimento, s.nome_setor 
+      FROM atividades a 
+      JOIN grupos_atividade g ON a.grupo_atividade_id = g.id 
+      LEFT JOIN ambientes amb ON a.ambiente_id = amb.id
+      LEFT JOIN pavimentos p ON a.pavimento_id = p.id
+      LEFT JOIN setores s ON a.setor_id = s.id
+      WHERE 1=1
+    `;
+    const params: any[] = [];
     if (grupo_id) { sql += " AND a.grupo_atividade_id = ?"; params.push(grupo_id); }
     if (status) { sql += " AND a.status = ?"; params.push(status); }
     if (prazo_max) { sql += " AND a.prazo_execucao <= ?"; params.push(prazo_max); }
-    sql += " ORDER BY a.nome_atividade";
+    if (ambiente_id) { sql += " AND a.ambiente_id = ?"; params.push(ambiente_id); }
+    if (pavimento_id) { sql += " AND a.pavimento_id = ?"; params.push(pavimento_id); }
+    if (setor_id) { sql += " AND a.setor_id = ?"; params.push(setor_id); }
+    
+    const total = await db.queryOne(`SELECT COUNT(*) as count FROM (${sql}) as t`, params);
+    sql += " ORDER BY a.nome_atividade LIMIT ? OFFSET ?";
+    params.push(limit, offset);
+    
     const data = await db.query(sql, params);
-    res.json(data);
+    res.json({ data, total: parseInt(total.count), page, limit });
   });
+
   app.post("/api/atividades", requireAdmin, async (req, res) => {
-    const { grupo_atividade_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status } = req.body;
-    const info = await db.run("INSERT INTO atividades (grupo_atividade_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-      [grupo_atividade_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao || 1, status || 'Ativo']);
+    const { grupo_atividade_id, ambiente_id, pavimento_id, setor_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status, linkServiceIds } = req.body;
+    const info = await db.run("INSERT INTO atividades (grupo_atividade_id, ambiente_id, pavimento_id, setor_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+      [grupo_atividade_id, ambiente_id, pavimento_id, setor_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao || 1, status || 'Ativo']);
+    
+    // Link services if provided
+    if (linkServiceIds && Array.isArray(linkServiceIds) && ambiente_id) {
+      for (const serviceId of linkServiceIds) {
+        await db.run("UPDATE servicos_ambiente SET ambiente_id = ? WHERE id = ?", [ambiente_id, serviceId]);
+      }
+    }
+
     res.json({ id: info.lastInsertRowid });
   });
+
   app.put("/api/atividades/:id", requireAdmin, async (req, res) => {
-    const { grupo_atividade_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status } = req.body;
-    await db.run("UPDATE atividades SET grupo_atividade_id = ?, nome_atividade = ?, unidade_medida = ?, prazo_execucao = ?, produtividade_profissional = ?, valor_parametro = ?, tipo_pagamento = ?, descricao = ?, quantidade_padrao = ?, status = ? WHERE id = ?", 
-      [grupo_atividade_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status, req.params.id]);
+    const { grupo_atividade_id, ambiente_id, pavimento_id, setor_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status } = req.body;
+    await db.run("UPDATE atividades SET grupo_atividade_id = ?, ambiente_id = ?, pavimento_id = ?, setor_id = ?, nome_atividade = ?, unidade_medida = ?, prazo_execucao = ?, produtividade_profissional = ?, valor_parametro = ?, tipo_pagamento = ?, descricao = ?, quantidade_padrao = ?, status = ? WHERE id = ?", 
+      [grupo_atividade_id, ambiente_id, pavimento_id, setor_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status, req.params.id]);
     res.json({ success: true });
   });
   app.delete("/api/atividades/:id", requireAdmin, async (req, res) => {
-    await db.run("DELETE FROM atividades WHERE id = ?", [req.params.id]);
-    res.json({ success: true });
+    try {
+      await db.run("DELETE FROM atividades WHERE id = ?", [req.params.id]);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: "Não é possível excluir esta atividade pois existem execuções ou composições vinculadas a ela." });
+    }
   });
 
   app.get("/api/composicao-atividade", async (req, res) => {
@@ -973,6 +1157,7 @@ async function startServer() {
   // --- NUCLEO 4: EXECUCAO DIARIA ---
   app.get("/api/execucao-diaria", async (req, res) => {
     const { data, funcionario_id } = req.query;
+    const { page, limit, offset } = getPagination(req);
     let sql = `
       SELECT ex.*, e.name as funcionario_nome, a.nome_atividade, amb.nome_ambiente 
       FROM execucao_diaria ex
@@ -981,16 +1166,21 @@ async function startServer() {
       JOIN ambientes amb ON ex.ambiente_id = amb.id
       WHERE 1=1
     `;
-    const params = [];
+    const params: any[] = [];
     if (data) { sql += " AND ex.data_execucao = ?"; params.push(data); }
     if (funcionario_id) { sql += " AND ex.funcionario_id = ?"; params.push(funcionario_id); }
-    sql += " ORDER BY ex.created_at DESC";
+    
+    const total = await db.queryOne(`SELECT COUNT(*) as count FROM (${sql}) as t`, params);
+    sql += " ORDER BY ex.created_at DESC LIMIT ? OFFSET ?";
+    params.push(limit, offset);
+    
     const result = await db.query(sql, params);
-    res.json(result);
+    res.json({ data: result, total: parseInt(total.count), page, limit });
   });
 
   app.post("/api/execucao-diaria", requireAdmin, async (req, res) => {
     const { data_execucao, funcionario_id, atividade_id, ambiente_id, quantidade_executada, observacoes } = req.body;
+    if (!validateDate(data_execucao)) return res.status(400).json({ error: "Formato de data inválido. Use yyyy-MM-dd." });
     
     try {
       // 1. Insert execution record
@@ -1071,8 +1261,10 @@ async function startServer() {
 
   // --- ESTOQUE ---
   app.get("/api/estoque", async (req, res) => {
-    const items = await db.query("SELECT * FROM estoque ORDER BY descricao");
-    res.json(items);
+    const { page, limit, offset } = getPagination(req);
+    const items = await db.query("SELECT * FROM estoque ORDER BY descricao LIMIT ? OFFSET ?", [limit, offset]);
+    const total = await db.queryOne("SELECT COUNT(*) as count FROM estoque");
+    res.json({ data: items, total: parseInt(total.count), page, limit });
   });
 
   app.get("/api/estoque/alertas", async (req, res) => {
@@ -1103,8 +1295,10 @@ async function startServer() {
 
   // --- CHECKLIST ---
   app.get("/api/checklists", async (req, res) => {
-    const items = await db.query("SELECT * FROM checklists ORDER BY created_at DESC");
-    res.json(items);
+    const { page, limit, offset } = getPagination(req);
+    const items = await db.query("SELECT * FROM checklists ORDER BY created_at DESC LIMIT ? OFFSET ?", [limit, offset]);
+    const total = await db.queryOne("SELECT COUNT(*) as count FROM checklists");
+    res.json({ data: items, total: parseInt(total.count), page, limit });
   });
 
   app.post("/api/checklists", async (req, res) => {

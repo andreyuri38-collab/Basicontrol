@@ -14,8 +14,23 @@ import {
   Copy,
   Package,
   Wrench,
-  AlertTriangle
+  AlertTriangle,
+  GitGraph,
+  List
 } from 'lucide-react';
+import { ConfirmationModal } from './ConfirmationModal';
+import { 
+  ReactFlow, 
+  Background, 
+  Controls, 
+  MiniMap,
+  useNodesState,
+  useEdgesState,
+  addEdge,
+  MarkerType
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import { Pagination } from './Pagination';
 
 interface Sector {
   id: number;
@@ -37,7 +52,26 @@ interface Environment {
   nome_ambiente: string;
   tipo_ambiente: string;
   area_total: number;
+  area_teto?: number;
+  area_parede?: number;
   descricao: string;
+  piso?: string;
+  parede?: string;
+  teto?: string;
+  esquadrias?: string;
+  metais?: string;
+  loucas?: string;
+  nome_pavimento?: string;
+  tem_portas: boolean;
+  tem_janelas: boolean;
+  tem_pontos_eletricos: boolean;
+  tem_pontos_sanitarios: boolean;
+  tem_pontos_hidraulicos: boolean;
+  portas?: any[];
+  janelas?: any[];
+  pontos_eletricos?: any[];
+  pontos_sanitarios?: any[];
+  pontos_hidraulicos?: any[];
 }
 
 interface Service {
@@ -63,9 +97,18 @@ interface Material {
 
 export default function ConstructionParameters() {
   const [setores, setSetores] = useState<Sector[]>([]);
+  const [totalSetores, setTotalSetores] = useState(0);
+  const [currentSetorPage, setCurrentSetorPage] = useState(1);
+  
   const [pavimentos, setPavimentos] = useState<Floor[]>([]);
+  const [totalPavimentos, setTotalPavimentos] = useState(0);
+  const [currentPavimentoPage, setCurrentPavimentoPage] = useState(1);
+
   const [ambientes, setAmbientes] = useState<Environment[]>([]);
-  const [servicos, setServicos] = useState<Service[]>([]);
+  const [totalAmbientes, setTotalAmbientes] = useState(0);
+  const [currentAmbientePage, setCurrentAmbientePage] = useState(1);
+
+  const itemsPerPage = 20;
   const [activities, setActivities] = useState<any[]>([]);
   
   const [selectedSector, setSelectedSector] = useState<number | null>(null);
@@ -74,60 +117,142 @@ export default function ConstructionParameters() {
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCopyModalOpen, setIsCopyModalOpen] = useState(false);
-  const [modalType, setModalType] = useState<'sector' | 'floor' | 'env' | 'service'>('sector');
+  const [modalType, setModalType] = useState<'sector' | 'floor' | 'env'>('sector');
   const [copySource, setCopySource] = useState<{ type: string, id: number, name: string } | null>(null);
   const [copyDestId, setCopyDestId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
+  
+  // Confirmation Modal State
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
   const [expandedServiceId, setExpandedServiceId] = useState<number | null>(null);
   const [serviceMaterials, setServiceMaterials] = useState<Material[]>([]);
   const [stockAlerts, setStockAlerts] = useState<any[]>([]);
   
   const [formData, setFormData] = useState<any>({});
+  const [viewMode, setViewMode] = useState<'list' | 'flow'>('list');
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
   useEffect(() => {
-    fetchSetores();
+    if (viewMode === 'flow') {
+      generateFlowData();
+    }
+  }, [viewMode, setores, pavimentos, ambientes]);
+
+  const generateFlowData = () => {
+    const newNodes: any[] = [];
+    const newEdges: any[] = [];
+    let yOffset = 0;
+
+    setores.forEach((sector, sIdx) => {
+      const sectorId = `sector-${sector.id}`;
+      newNodes.push({
+        id: sectorId,
+        data: { label: sector.nome_setor },
+        position: { x: 0, y: sIdx * 300 },
+        style: { background: '#6366f1', color: '#fff', borderRadius: '12px', padding: '10px', width: 150 },
+      });
+
+      // For simplicity in the flowchart, we'll only show children if they are loaded
+      // In a real app, we might want to fetch all hierarchy for the flow view
+      const sectorFloors = pavimentos.filter(p => p.setor_id === sector.id);
+      sectorFloors.forEach((floor, fIdx) => {
+        const floorId = `floor-${floor.id}`;
+        newNodes.push({
+          id: floorId,
+          data: { label: floor.nome_pavimento },
+          position: { x: 250, y: (sIdx * 300) + (fIdx * 100) },
+          style: { background: '#10b981', color: '#fff', borderRadius: '12px', padding: '10px', width: 150 },
+        });
+
+        newEdges.push({
+          id: `e-${sectorId}-${floorId}`,
+          source: sectorId,
+          target: floorId,
+          animated: true,
+          markerEnd: { type: MarkerType.ArrowClosed },
+        });
+
+        const floorEnvs = ambientes.filter(a => a.pavimento_id === floor.id);
+        floorEnvs.forEach((env, eIdx) => {
+          const envId = `env-${env.id}`;
+          newNodes.push({
+            id: envId,
+            data: { label: env.nome_ambiente },
+            position: { x: 500, y: (sIdx * 300) + (fIdx * 100) + (eIdx * 50) },
+            style: { background: '#f59e0b', color: '#fff', borderRadius: '12px', padding: '10px', width: 150 },
+          });
+
+          newEdges.push({
+            id: `e-${floorId}-${envId}`,
+            source: floorId,
+            target: envId,
+            markerEnd: { type: MarkerType.ArrowClosed },
+          });
+        });
+      });
+    });
+
+    setNodes(newNodes);
+    setEdges(newEdges);
+  };
+
+  useEffect(() => {
+    fetchSetores(currentSetorPage);
     fetchActivities();
     fetchStockAlerts();
-  }, []);
+  }, [currentSetorPage]);
 
   useEffect(() => {
-    if (selectedSector) fetchPavimentos(selectedSector);
-    else setPavimentos([]);
-  }, [selectedSector]);
+    if (selectedSector) fetchPavimentos(selectedSector, currentPavimentoPage);
+    else {
+      setPavimentos([]);
+      setTotalPavimentos(0);
+    }
+  }, [selectedSector, currentPavimentoPage]);
 
   useEffect(() => {
-    if (selectedFloor) fetchAmbientes(selectedFloor);
-    else setAmbientes([]);
-  }, [selectedFloor]);
+    if (selectedFloor) fetchAmbientes(selectedFloor, currentAmbientePage);
+    else {
+      setAmbientes([]);
+      setTotalAmbientes(0);
+    }
+  }, [selectedFloor, currentAmbientePage]);
 
-  useEffect(() => {
-    if (selectedEnv) fetchServicos(selectedEnv);
-    else setServicos([]);
-  }, [selectedEnv]);
-
-  const fetchSetores = async () => {
-    const res = await fetch('/api/setores');
-    setSetores(await res.json());
+  const fetchSetores = async (page: number) => {
+    const res = await fetch(`/api/setores?page=${page}&limit=${itemsPerPage}`);
+    const data = await res.json();
+    setSetores(data.data);
+    setTotalSetores(data.total);
   };
 
-  const fetchPavimentos = async (sectorId: number) => {
-    const res = await fetch(`/api/pavimentos?setor_id=${sectorId}`);
-    setPavimentos(await res.json());
+  const fetchPavimentos = async (sectorId: number, page: number) => {
+    const res = await fetch(`/api/pavimentos?setor_id=${sectorId}&page=${page}&limit=${itemsPerPage}`);
+    const data = await res.json();
+    setPavimentos(data.data);
+    setTotalPavimentos(data.total);
   };
 
-  const fetchAmbientes = async (floorId: number) => {
-    const res = await fetch(`/api/ambientes?pavimento_id=${floorId}`);
-    setAmbientes(await res.json());
-  };
-
-  const fetchServicos = async (envId: number) => {
-    const res = await fetch(`/api/servicos-ambiente?ambiente_id=${envId}`);
-    setServicos(await res.json());
+  const fetchAmbientes = async (floorId: number, page: number) => {
+    const res = await fetch(`/api/ambientes?pavimento_id=${floorId}&page=${page}&limit=${itemsPerPage}`);
+    const data = await res.json();
+    setAmbientes(data.data);
+    setTotalAmbientes(data.total);
   };
 
   const fetchActivities = async () => {
-    const res = await fetch('/api/atividades');
-    setActivities(await res.json());
+    const res = await fetch('/api/atividades?limit=1000');
+    const data = await res.json();
+    setActivities(data.data || []);
   };
 
   const fetchStockAlerts = async () => {
@@ -163,10 +288,6 @@ export default function ConstructionParameters() {
         if (!body.pavimento_id) body.pavimento_id = selectedFloor;
       }
     }
-    if (modalType === 'service') {
-      url = editingId ? `/api/servicos-ambiente/${editingId}` : '/api/servicos-ambiente';
-      if (!editingId) body.ambiente_id = selectedEnv;
-    }
 
     const res = await fetch(url, {
       method: editingId ? 'PUT' : 'POST',
@@ -181,10 +302,9 @@ export default function ConstructionParameters() {
       setIsModalOpen(false);
       setFormData({});
       setEditingId(null);
-      if (modalType === 'sector') fetchSetores();
-      if (modalType === 'floor') fetchPavimentos(selectedSector!);
-      if (modalType === 'env') fetchAmbientes(selectedFloor!);
-      if (modalType === 'service') fetchServicos(selectedEnv!);
+      if (modalType === 'sector') fetchSetores(currentSetorPage);
+      if (modalType === 'floor') fetchPavimentos(selectedSector!, currentPavimentoPage);
+      if (modalType === 'env') fetchAmbientes(selectedFloor!, currentAmbientePage);
     }
   };
 
@@ -203,9 +323,6 @@ export default function ConstructionParameters() {
     } else if (copySource.type === 'env') {
       url = '/api/copy/services';
       body = { fromEnvId: copySource.id, toEnvId: copyDestId };
-    } else if (copySource.type === 'service') {
-      url = '/api/copy/single-service';
-      body = { fromServiceId: copySource.id, toEnvId: copyDestId };
     }
 
     const res = await fetch(url, {
@@ -221,32 +338,43 @@ export default function ConstructionParameters() {
       setIsCopyModalOpen(false);
       setCopySource(null);
       setCopyDestId(null);
-      if (copySource.type === 'sector') fetchPavimentos(copyDestId);
-      if (copySource.type === 'floor') fetchAmbientes(copyDestId);
-      if (copySource.type === 'env' || copySource.type === 'service') fetchServicos(copyDestId);
+      if (copySource.type === 'sector') fetchPavimentos(copyDestId, 1);
+      if (copySource.type === 'floor') fetchAmbientes(copyDestId, 1);
     }
   };
 
-  const handleDelete = async (type: string, id: number) => {
-    if (!confirm('Tem certeza que deseja excluir este item?')) return;
+  const handleDelete = (type: string, id: number) => {
+    const itemType = type === 'sector' ? 'Setor' : type === 'floor' ? 'Pavimento' : 'Ambiente';
     
-    let url = '';
-    if (type === 'sector') url = `/api/setores/${id}`;
-    if (type === 'floor') url = `/api/pavimentos/${id}`;
-    if (type === 'env') url = `/api/ambientes/${id}`;
-    if (type === 'service') url = `/api/servicos-ambiente/${id}`;
+    setConfirmConfig({
+      title: `Excluir ${itemType}?`,
+      message: `Tem certeza que deseja excluir este ${itemType.toLowerCase()}? Esta ação não pode ser desfeita.`,
+      onConfirm: async () => {
+        let url = '';
+        if (type === 'sector') url = `/api/setores/${id}`;
+        if (type === 'floor') url = `/api/pavimentos/${id}`;
+        if (type === 'env') url = `/api/ambientes/${id}`;
 
-    const res = await fetch(url, {
-      method: 'DELETE',
-      headers: { 'x-user-role': 'admin' }
+        try {
+          const res = await fetch(url, {
+            method: 'DELETE',
+            headers: { 'x-user-role': 'admin' }
+          });
+
+          if (res.ok) {
+            if (type === 'sector') { fetchSetores(currentSetorPage); setSelectedSector(null); }
+            if (type === 'floor') { fetchPavimentos(selectedSector!, currentPavimentoPage); setSelectedFloor(null); }
+            if (type === 'env') { fetchAmbientes(selectedFloor!, currentAmbientePage); setSelectedEnv(null); }
+          } else {
+            const err = await res.json();
+            console.error(err.error || 'Erro ao excluir item');
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }
     });
-
-    if (res.ok) {
-      if (type === 'sector') { fetchSetores(); setSelectedSector(null); }
-      if (type === 'floor') { fetchPavimentos(selectedSector!); setSelectedFloor(null); }
-      if (type === 'env') { fetchAmbientes(selectedFloor!); setSelectedEnv(null); }
-      if (type === 'service') fetchServicos(selectedEnv!);
-    }
+    setIsConfirmOpen(true);
   };
 
   const openEdit = (type: any, item: any) => {
@@ -282,16 +410,66 @@ export default function ConstructionParameters() {
           <h2 className="text-2xl font-bold text-slate-900">Parâmetros Construtivos</h2>
           <p className="text-slate-500">Defina a estrutura física e serviços da obra</p>
         </div>
-        <button 
-          onClick={() => { setModalType('sector'); setEditingId(null); setFormData({}); setIsModalOpen(true); }}
-          className="flex items-center gap-2 px-4 py-2 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition-all font-bold shadow-lg shadow-emerald-500/20"
-        >
-          <Plus size={20} />
-          Novo Setor
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="bg-white border border-slate-200 rounded-xl p-1 flex items-center shadow-sm">
+            <button 
+              onClick={() => setViewMode('list')}
+              className={`p-2 rounded-lg transition-all ${viewMode === 'list' ? 'bg-slate-100 text-slate-900 shadow-inner' : 'text-slate-400 hover:text-slate-600'}`}
+              title="Visualização em Lista"
+            >
+              <List size={20} />
+            </button>
+            <button 
+              onClick={() => setViewMode('flow')}
+              className={`p-2 rounded-lg transition-all ${viewMode === 'flow' ? 'bg-slate-100 text-slate-900 shadow-inner' : 'text-slate-400 hover:text-slate-600'}`}
+              title="Visualização em Fluxograma"
+            >
+              <GitGraph size={20} />
+            </button>
+          </div>
+          <button 
+            onClick={() => { setModalType('sector'); setEditingId(null); setFormData({}); setIsModalOpen(true); }}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition-all font-bold shadow-lg shadow-emerald-500/20"
+          >
+            <Plus size={20} />
+            Novo Setor
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+      {viewMode === 'flow' ? (
+        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm h-[600px] overflow-hidden relative">
+          <div className="absolute top-4 left-4 z-10 bg-white/80 backdrop-blur-md p-3 rounded-2xl border border-slate-200 shadow-sm">
+            <h4 className="font-bold text-slate-800 text-sm mb-1">Legenda do Fluxo</h4>
+            <div className="flex gap-4">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-indigo-500 rounded-full"></div>
+                <span className="text-[10px] font-bold text-slate-500 uppercase">Setor</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-emerald-500 rounded-full"></div>
+                <span className="text-[10px] font-bold text-slate-500 uppercase">Pavimento</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-amber-500 rounded-full"></div>
+                <span className="text-[10px] font-bold text-slate-500 uppercase">Ambiente</span>
+              </div>
+            </div>
+          </div>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            fitView
+          >
+            <Background />
+            <Controls />
+            <MiniMap />
+          </ReactFlow>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Sectors Column */}
         <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
           <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
@@ -324,6 +502,13 @@ export default function ConstructionParameters() {
             ))}
             {setores.length === 0 && <p className="p-4 text-center text-slate-400 text-sm italic">Nenhum setor cadastrado</p>}
           </div>
+          <Pagination 
+            currentPage={currentSetorPage}
+            totalItems={totalSetores}
+            itemsPerPage={itemsPerPage}
+            onPageChange={setCurrentSetorPage}
+            compact
+          />
         </div>
 
         {/* Floors Column */}
@@ -367,6 +552,15 @@ export default function ConstructionParameters() {
               </>
             )}
           </div>
+          {selectedSector && (
+            <Pagination 
+              currentPage={currentPavimentoPage}
+              totalItems={totalPavimentos}
+              itemsPerPage={itemsPerPage}
+              onPageChange={setCurrentPavimentoPage}
+              compact
+            />
+          )}
         </div>
 
         {/* Environments Column */}
@@ -412,114 +606,21 @@ export default function ConstructionParameters() {
                 {ambientes.length === 0 && <p className="p-4 text-center text-slate-400 text-sm italic">Nenhum ambiente</p>}
               </>
             )}
-          </div>
-        </div>
-
-        {/* Services Column */}
-        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden lg:col-span-1">
-          <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
-            <h3 className="font-bold text-slate-700 flex items-center gap-2">
-              <Activity size={18} className="text-rose-500" /> Serviços
-            </h3>
-            {selectedEnv && (
-              <button onClick={() => { setModalType('service'); setIsModalOpen(true); }} className="p-1 hover:bg-rose-100 text-rose-600 rounded-lg">
-                <Plus size={18} />
-              </button>
-            )}
-          </div>
-          <div className="p-4 space-y-4">
-            {!selectedEnv ? (
-              <p className="p-8 text-center text-slate-400 text-sm italic">Selecione um ambiente</p>
-            ) : (
-              <>
-                {servicos.map(s => {
-                  const progress = (s.quantidade_executada / s.quantidade_total_prevista) * 100;
-                  const isExpanded = expandedServiceId === s.id;
-                  return (
-                    <div key={s.id} className="space-y-2 p-3 bg-slate-50 rounded-xl border border-slate-100 group relative">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <button 
-                            onClick={() => fetchMaterials(s.id)}
-                            className="font-bold text-slate-700 text-sm hover:text-rose-600 transition-colors flex items-center gap-1"
-                          >
-                            {s.nome_servico}
-                            {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                          </button>
-                          <button 
-                            onClick={() => fetchMaterials(s.id)}
-                            className="text-[10px] font-bold text-rose-500 bg-rose-50 px-2 py-0.5 rounded-full hover:bg-rose-100 transition-colors"
-                          >
-                            {isExpanded ? 'Fechar' : 'Detalhes'}
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => { setCopySource({ type: 'service', id: s.id, name: s.nome_servico }); setIsCopyModalOpen(true); }} className="p-1 hover:bg-rose-100 text-rose-600 rounded-lg" title="Copiar este serviço para outro ambiente">
-                            <Copy size={12} />
-                          </button>
-                          <button onClick={() => openEdit('service', s)} className="p-1 hover:bg-rose-100 text-rose-600 rounded-lg">
-                            <Edit2 size={12} />
-                          </button>
-                          <button onClick={() => handleDelete('service', s.id)} className="p-1 hover:bg-red-100 text-red-600 rounded-lg">
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                        <span className="text-[10px] font-bold text-slate-400">{Math.round(progress)}%</span>
-                      </div>
-                      <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                        <div className="h-full bg-emerald-500" style={{ width: `${progress}%` }}></div>
-                      </div>
-                      <div className="flex items-center justify-between text-[10px] font-medium text-slate-500">
-                        <span>{s.quantidade_executada} / {s.quantidade_total_prevista} {s.unidade_medida}</span>
-                        <span className="text-rose-500">Restam: {s.quantidade_restante}</span>
-                      </div>
-
-                      {isExpanded && (
-                        <div className="mt-3 pt-3 border-t border-slate-200 space-y-2 animate-in fade-in slide-in-from-top-1">
-                          <div className="flex items-center justify-between">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Composição de Materiais</p>
-                            <span className="text-[10px] text-slate-400 italic">Baseado na atividade vinculada</span>
-                          </div>
-                          {serviceMaterials.length > 0 ? (
-                            <div className="space-y-1.5">
-                              {serviceMaterials.map(m => (
-                                <div key={m.id} className="flex items-center justify-between text-[10px] bg-white p-2.5 rounded-xl border border-slate-100 shadow-sm">
-                                  <div className="flex items-center gap-2">
-                                    <div className={`p-1.5 rounded-lg ${m.tipo_item === 'INSUMO' ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-600'}`}>
-                                      {m.tipo_item === 'INSUMO' ? <Package size={12} /> : <Wrench size={12} />}
-                                    </div>
-                                    <div>
-                                      <span className="text-[9px] font-bold text-slate-400 uppercase block leading-none mb-0.5">{m.tipo_item}</span>
-                                      <span className="text-slate-700 font-bold">{m.descricao}</span>
-                                    </div>
-                                  </div>
-                                  <div className="text-right">
-                                    <span className="text-[9px] text-slate-400 block leading-none mb-0.5 uppercase font-bold">Qtd. Necessária</span>
-                                    <span className="font-bold text-slate-900 text-xs">
-                                      {m.quantidade_total.toLocaleString(undefined, { maximumFractionDigits: 3 })} {m.unidade_medida}
-                                    </span>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="py-4 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                              <p className="text-[10px] text-slate-400 italic">Nenhum material de composição encontrado para esta atividade.</p>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-                {servicos.length === 0 && <p className="text-center text-slate-400 text-sm italic py-4">Nenhum serviço</p>}
-              </>
-            )}
-          </div>
+            {selectedFloor && (
+            <Pagination 
+              currentPage={currentAmbientePage}
+              totalItems={totalAmbientes}
+              itemsPerPage={itemsPerPage}
+              onPageChange={setCurrentAmbientePage}
+              compact
+            />
+          )}
         </div>
       </div>
+    </div>
+    )}
 
-      {/* Modal */}
+    {/* Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
@@ -528,10 +629,19 @@ export default function ConstructionParameters() {
                 {modalType === 'sector' && (editingId ? 'Editar Setor' : 'Novo Setor')}
                 {modalType === 'floor' && (editingId ? 'Editar Pavimento' : 'Novo Pavimento')}
                 {modalType === 'env' && (editingId ? 'Editar Ambiente' : 'Novo Ambiente')}
-                {modalType === 'service' && 'Novo Serviço'}
               </h3>
             </div>
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+              {modalType === 'env' && (
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 mb-4">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Localização</p>
+                  <div className="flex gap-4 mt-1">
+                    <p className="text-sm text-slate-700">Setor: <span className="font-bold">{setores.find(s => s.id == (formData.setor_id || selectedSector))?.nome_setor || '-'}</span></p>
+                    <p className="text-sm text-slate-700">Pavimento: <span className="font-bold">{pavimentos.find(p => p.id == (formData.pavimento_id || selectedFloor))?.nome_pavimento || '-'}</span></p>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-slate-700">Nome / Título</label>
                 <input 
@@ -544,7 +654,6 @@ export default function ConstructionParameters() {
                     if (modalType === 'sector') setFormData({ ...formData, nome_setor: val });
                     if (modalType === 'floor') setFormData({ ...formData, nome_pavimento: val });
                     if (modalType === 'env') setFormData({ ...formData, nome_ambiente: val });
-                    if (modalType === 'service') setFormData({ ...formData, nome_servico: val });
                   }}
                 />
               </div>
@@ -570,37 +679,6 @@ export default function ConstructionParameters() {
                 <>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-sm font-semibold text-slate-700">Setor</label>
-                      <select 
-                        required
-                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-emerald-500"
-                        value={formData.setor_id || selectedSector || ''}
-                        onChange={e => setFormData({ ...formData, setor_id: e.target.value, pavimento_id: '' })}
-                      >
-                        <option value="">Selecione...</option>
-                        {setores.map(s => (
-                          <option key={s.id} value={s.id}>{s.nome_setor}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-semibold text-slate-700">Pavimento</label>
-                      <select 
-                        required
-                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-emerald-500"
-                        value={formData.pavimento_id || selectedFloor || ''}
-                        onChange={e => setFormData({ ...formData, pavimento_id: e.target.value })}
-                      >
-                        <option value="">Selecione...</option>
-                        {/* Filter pavimentos based on selected sector in form or global selectedSector */}
-                        {pavimentos.filter(p => p.setor_id == (formData.setor_id || selectedSector)).map(p => (
-                          <option key={p.id} value={p.id}>{p.nome_pavimento}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
                       <label className="text-sm font-semibold text-slate-700">Tipo</label>
                       <select 
                         required
@@ -618,7 +696,7 @@ export default function ConstructionParameters() {
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-semibold text-slate-700">Área (m²)</label>
+                      <label className="text-sm font-semibold text-slate-700">Área de Piso (m²)</label>
                       <input 
                         required
                         type="number" 
@@ -629,55 +707,250 @@ export default function ConstructionParameters() {
                       />
                     </div>
                   </div>
-                </>
-              )}
 
-              {modalType === 'service' && (
-                <>
-                  <div className="space-y-2">
-                    <label className="text-sm font-semibold text-slate-700">Vincular Atividade (Opcional)</label>
-                    <select 
-                      className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-emerald-500"
-                      onChange={e => {
-                        const act = activities.find(a => a.id == e.target.value);
-                        if (act) {
-                          setFormData({
-                            ...formData,
-                            nome_servico: act.nome_atividade,
-                            unidade_medida: act.unidade_medida,
-                            quantidade_total_prevista: act.quantidade_padrao || 1,
-                            descricao: act.descricao || ''
-                          });
-                        }
-                      }}
-                    >
-                      <option value="">Selecione uma atividade para preencher...</option>
-                      {activities.map(a => (
-                        <option key={a.id} value={a.id}>{a.nome_atividade} ({a.unidade_medida})</option>
-                      ))}
-                    </select>
-                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-sm font-semibold text-slate-700">Unidade</label>
+                      <label className="text-sm font-semibold text-slate-700">Área de Teto (m²)</label>
                       <input 
-                        required
-                        placeholder="m², un, kg..."
-                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-emerald-500"
-                        value={formData.unidade_medida || ''}
-                        onChange={e => setFormData({ ...formData, unidade_medida: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-semibold text-slate-700">Qtd. Prevista</label>
-                      <input 
-                        required
                         type="number" 
                         step="0.01"
                         className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-emerald-500"
-                        value={formData.quantidade_total_prevista || ''}
-                        onChange={e => setFormData({ ...formData, quantidade_total_prevista: e.target.value })}
+                        value={formData.area_teto || ''}
+                        onChange={e => setFormData({ ...formData, area_teto: e.target.value })}
                       />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">Área de Alvenaria (m²)</label>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-emerald-500"
+                        value={formData.area_parede || ''}
+                        onChange={e => setFormData({ ...formData, area_parede: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-4 border-t border-slate-100">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Especificações Técnicas</h4>
+                    
+                    <div className="space-y-4">
+                      {/* Portas */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-bold text-slate-700">Portas?</label>
+                          <div className="flex bg-slate-100 p-1 rounded-lg">
+                            <button 
+                              type="button"
+                              onClick={() => setFormData({...formData, tem_portas: true, portas: formData.portas || [{width: 0.8, height: 2.1, quantity: 1}]})}
+                              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${formData.tem_portas ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400'}`}
+                            >SIM</button>
+                            <button 
+                              type="button"
+                              onClick={() => setFormData({...formData, tem_portas: false})}
+                              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${!formData.tem_portas ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-400'}`}
+                            >NÃO</button>
+                          </div>
+                        </div>
+                        {formData.tem_portas && (
+                          <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
+                            {formData.portas?.map((door: any, idx: number) => (
+                              <div key={idx} className="grid grid-cols-3 gap-2">
+                                <input type="number" step="0.01" placeholder="Larg." className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" value={door.width} onChange={e => {
+                                  const newPortas = [...formData.portas];
+                                  newPortas[idx].width = e.target.value;
+                                  setFormData({...formData, portas: newPortas});
+                                }} />
+                                <input type="number" step="0.01" placeholder="Alt." className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" value={door.height} onChange={e => {
+                                  const newPortas = [...formData.portas];
+                                  newPortas[idx].height = e.target.value;
+                                  setFormData({...formData, portas: newPortas});
+                                }} />
+                                <input type="number" placeholder="Qtd." className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" value={door.quantity} onChange={e => {
+                                  const newPortas = [...formData.portas];
+                                  newPortas[idx].quantity = e.target.value;
+                                  setFormData({...formData, portas: newPortas});
+                                }} />
+                              </div>
+                            ))}
+                            <button type="button" onClick={() => setFormData({...formData, portas: [...(formData.portas || []), {width: 0.8, height: 2.1, quantity: 1}]})} className="text-[10px] font-bold text-emerald-600 hover:underline">+ Adicionar Porta</button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Janelas */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-bold text-slate-700">Janelas?</label>
+                          <div className="flex bg-slate-100 p-1 rounded-lg">
+                            <button 
+                              type="button"
+                              onClick={() => setFormData({...formData, tem_janelas: true, janelas: formData.janelas || [{width: 1.2, height: 1.0, peitoril: 1.1, quantity: 1}]})}
+                              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${formData.tem_janelas ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400'}`}
+                            >SIM</button>
+                            <button 
+                              type="button"
+                              onClick={() => setFormData({...formData, tem_janelas: false})}
+                              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${!formData.tem_janelas ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-400'}`}
+                            >NÃO</button>
+                          </div>
+                        </div>
+                        {formData.tem_janelas && (
+                          <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
+                            {formData.janelas?.map((win: any, idx: number) => (
+                              <div key={idx} className="grid grid-cols-4 gap-2">
+                                <input type="number" step="0.01" placeholder="Larg." className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" value={win.width} onChange={e => {
+                                  const newJanelas = [...formData.janelas];
+                                  newJanelas[idx].width = e.target.value;
+                                  setFormData({...formData, janelas: newJanelas});
+                                }} />
+                                <input type="number" step="0.01" placeholder="Alt." className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" value={win.height} onChange={e => {
+                                  const newJanelas = [...formData.janelas];
+                                  newJanelas[idx].height = e.target.value;
+                                  setFormData({...formData, janelas: newJanelas});
+                                }} />
+                                <input type="number" step="0.01" placeholder="Peit." className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" value={win.peitoril} onChange={e => {
+                                  const newJanelas = [...formData.janelas];
+                                  newJanelas[idx].peitoril = e.target.value;
+                                  setFormData({...formData, janelas: newJanelas});
+                                }} />
+                                <input type="number" placeholder="Qtd." className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" value={win.quantity} onChange={e => {
+                                  const newJanelas = [...formData.janelas];
+                                  newJanelas[idx].quantity = e.target.value;
+                                  setFormData({...formData, janelas: newJanelas});
+                                }} />
+                              </div>
+                            ))}
+                            <button type="button" onClick={() => setFormData({...formData, janelas: [...(formData.janelas || []), {width: 1.2, height: 1.0, peitoril: 1.1, quantity: 1}]})} className="text-[10px] font-bold text-emerald-600 hover:underline">+ Adicionar Janela</button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Pontos Elétricos */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-bold text-slate-700">Pontos Elétricos?</label>
+                          <div className="flex bg-slate-100 p-1 rounded-lg">
+                            <button 
+                              type="button"
+                              onClick={() => setFormData({...formData, tem_pontos_eletricos: true, pontos_eletricos: formData.pontos_eletricos || [{type: 'Tomada', quantity: 1}]})}
+                              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${formData.tem_pontos_eletricos ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400'}`}
+                            >SIM</button>
+                            <button 
+                              type="button"
+                              onClick={() => setFormData({...formData, tem_pontos_eletricos: false})}
+                              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${!formData.tem_pontos_eletricos ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-400'}`}
+                            >NÃO</button>
+                          </div>
+                        </div>
+                        {formData.tem_pontos_eletricos && (
+                          <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
+                            {formData.pontos_eletricos?.map((p: any, idx: number) => (
+                              <div key={idx} className="grid grid-cols-2 gap-2">
+                                <select className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" value={p.type} onChange={e => {
+                                  const newPoints = [...formData.pontos_eletricos];
+                                  newPoints[idx].type = e.target.value;
+                                  setFormData({...formData, pontos_eletricos: newPoints});
+                                }}>
+                                  <option value="Tomada">Tomada</option>
+                                  <option value="Interruptor">Interruptor</option>
+                                  <option value="Interruptor + Tomada">Interruptor + Tomada</option>
+                                  <option value="Luminária">Luminária</option>
+                                  <option value="Ar Condicionado">Ar Condicionado</option>
+                                </select>
+                                <input type="number" placeholder="Qtd." className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" value={p.quantity} onChange={e => {
+                                  const newPoints = [...formData.pontos_eletricos];
+                                  newPoints[idx].quantity = e.target.value;
+                                  setFormData({...formData, pontos_eletricos: newPoints});
+                                }} />
+                              </div>
+                            ))}
+                            <button type="button" onClick={() => setFormData({...formData, pontos_eletricos: [...(formData.pontos_eletricos || []), {type: 'Tomada', quantity: 1}]})} className="text-[10px] font-bold text-emerald-600 hover:underline">+ Adicionar Ponto</button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Pontos Sanitários */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-bold text-slate-700">Pontos Sanitários?</label>
+                          <div className="flex bg-slate-100 p-1 rounded-lg">
+                            <button 
+                              type="button"
+                              onClick={() => setFormData({...formData, tem_pontos_sanitarios: true, pontos_sanitarios: formData.pontos_sanitarios || [{type: 'Piso', quantity: 1}]})}
+                              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${formData.tem_pontos_sanitarios ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400'}`}
+                            >SIM</button>
+                            <button 
+                              type="button"
+                              onClick={() => setFormData({...formData, tem_pontos_sanitarios: false})}
+                              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${!formData.tem_pontos_sanitarios ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-400'}`}
+                            >NÃO</button>
+                          </div>
+                        </div>
+                        {formData.tem_pontos_sanitarios && (
+                          <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
+                            {formData.pontos_sanitarios?.map((p: any, idx: number) => (
+                              <div key={idx} className="grid grid-cols-2 gap-2">
+                                <select className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" value={p.type} onChange={e => {
+                                  const newPoints = [...formData.pontos_sanitarios];
+                                  newPoints[idx].type = e.target.value;
+                                  setFormData({...formData, pontos_sanitarios: newPoints});
+                                }}>
+                                  <option value="Piso">Piso</option>
+                                  <option value="Parede">Parede</option>
+                                </select>
+                                <input type="number" placeholder="Qtd." className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" value={p.quantity} onChange={e => {
+                                  const newPoints = [...formData.pontos_sanitarios];
+                                  newPoints[idx].quantity = e.target.value;
+                                  setFormData({...formData, pontos_sanitarios: newPoints});
+                                }} />
+                              </div>
+                            ))}
+                            <button type="button" onClick={() => setFormData({...formData, pontos_sanitarios: [...(formData.pontos_sanitarios || []), {type: 'Piso', quantity: 1}]})} className="text-[10px] font-bold text-emerald-600 hover:underline">+ Adicionar Ponto</button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Pontos Hidráulicos */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-bold text-slate-700">Pontos Hidráulicos?</label>
+                          <div className="flex bg-slate-100 p-1 rounded-lg">
+                            <button 
+                              type="button"
+                              onClick={() => setFormData({...formData, tem_pontos_hidraulicos: true, pontos_hidraulicos: formData.pontos_hidraulicos || [{type: 'Parede', quantity: 1}]})}
+                              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${formData.tem_pontos_hidraulicos ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400'}`}
+                            >SIM</button>
+                            <button 
+                              type="button"
+                              onClick={() => setFormData({...formData, tem_pontos_hidraulicos: false})}
+                              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${!formData.tem_pontos_hidraulicos ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-400'}`}
+                            >NÃO</button>
+                          </div>
+                        </div>
+                        {formData.tem_pontos_hidraulicos && (
+                          <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
+                            {formData.pontos_hidraulicos?.map((p: any, idx: number) => (
+                              <div key={idx} className="grid grid-cols-2 gap-2">
+                                <select className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" value={p.type} onChange={e => {
+                                  const newPoints = [...formData.pontos_hidraulicos];
+                                  newPoints[idx].type = e.target.value;
+                                  setFormData({...formData, pontos_hidraulicos: newPoints});
+                                }}>
+                                  <option value="Parede">Parede</option>
+                                  <option value="Piso">Piso</option>
+                                </select>
+                                <input type="number" placeholder="Qtd." className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" value={p.quantity} onChange={e => {
+                                  const newPoints = [...formData.pontos_hidraulicos];
+                                  newPoints[idx].quantity = e.target.value;
+                                  setFormData({...formData, pontos_hidraulicos: newPoints});
+                                }} />
+                              </div>
+                            ))}
+                            <button type="button" onClick={() => setFormData({...formData, pontos_hidraulicos: [...(formData.pontos_hidraulicos || []), {type: 'Parede', quantity: 1}]})} className="text-[10px] font-bold text-emerald-600 hover:underline">+ Adicionar Ponto</button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </>
@@ -778,6 +1051,14 @@ export default function ConstructionParameters() {
           </div>
         </div>
       )}
+
+      <ConfirmationModal 
+        isOpen={isConfirmOpen}
+        onClose={() => setIsConfirmOpen(false)}
+        onConfirm={confirmConfig.onConfirm}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+      />
     </div>
   );
 }

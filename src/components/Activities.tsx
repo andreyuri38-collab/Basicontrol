@@ -14,6 +14,8 @@ import {
   Edit2,
   Info
 } from 'lucide-react';
+import { Pagination } from './Pagination';
+import { ConfirmationModal } from './ConfirmationModal';
 
 interface ActivityGroup {
   id: number;
@@ -24,6 +26,9 @@ interface ActivityGroup {
 interface Activity {
   id: number;
   grupo_atividade_id: number;
+  ambiente_id?: number | null;
+  pavimento_id?: number | null;
+  setor_id?: number | null;
   nome_atividade: string;
   unidade_medida: string;
   prazo_execucao: number;
@@ -33,6 +38,22 @@ interface Activity {
   descricao?: string;
   quantidade_padrao?: number;
   nome_grupo?: string;
+  status?: string;
+  nome_ambiente?: string;
+  nome_pavimento?: string;
+  nome_setor?: string;
+}
+
+interface Service {
+  id: number;
+  ambiente_id?: number | null;
+  nome_servico: string;
+  grupo_servico?: string;
+  unidade_medida: string;
+  quantidade_total_prevista: number;
+  quantidade_executada: number;
+  quantidade_restante: number;
+  descricao?: string;
 }
 
 interface Composition {
@@ -46,8 +67,23 @@ interface Composition {
 
 export default function Activities() {
   const [groups, setGroups] = useState<ActivityGroup[]>([]);
+  const [totalGroups, setTotalGroups] = useState(0);
+  const [currentGroupPage, setCurrentGroupPage] = useState(1);
+
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [totalActivities, setTotalActivities] = useState(0);
+  const [currentActivityPage, setCurrentActivityPage] = useState(1);
+
   const [compositions, setCompositions] = useState<Composition[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
+  
+  const [sectors, setSectors] = useState<any[]>([]);
+  const [floors, setFloors] = useState<any[]>([]);
+  const [environments, setEnvironments] = useState<any[]>([]);
+  const [independentServices, setIndependentServices] = useState<Service[]>([]);
+  const [selectedServiceIds, setSelectedServiceIds] = useState<number[]>([]);
+
+  const itemsPerPage = 20;
   
   const [selectedGroup, setSelectedGroup] = useState<number | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<number | null>(null);
@@ -55,36 +91,80 @@ export default function Activities() {
   const [filterPrazo, setFilterPrazo] = useState<string>('');
   
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalType, setModalType] = useState<'group' | 'activity' | 'composition'>('group');
+  const [modalType, setModalType] = useState<'group' | 'activity' | 'composition' | 'service'>('group');
   const [editingId, setEditingId] = useState<number | null>(null);
+  
+  // Confirmation Modal State
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
   const [formData, setFormData] = useState<any>({});
 
   useEffect(() => {
-    fetchGroups();
-  }, []);
+    fetchGroups(currentGroupPage);
+    fetchSectors();
+    fetchIndependentServices();
+  }, [currentGroupPage]);
 
   useEffect(() => {
-    fetchActivities(selectedGroup, filterStatus, filterPrazo);
+    fetchActivities(selectedGroup, filterStatus, filterPrazo, currentActivityPage);
     setSelectedActivity(null);
-  }, [selectedGroup, filterStatus, filterPrazo]);
+  }, [selectedGroup, filterStatus, filterPrazo, currentActivityPage]);
 
   useEffect(() => {
     if (selectedActivity) fetchCompositions(selectedActivity);
     else setCompositions([]);
   }, [selectedActivity]);
 
-  const fetchGroups = async () => {
-    const res = await fetch('/api/grupos-atividade');
-    setGroups(await res.json());
+  const fetchSectors = async () => {
+    const res = await fetch('/api/setores');
+    setSectors(await res.json());
   };
 
-  const fetchActivities = async (groupId: number | null, status: string, prazo: string) => {
-    let url = '/api/atividades?';
+  const fetchFloors = async (sectorId: number) => {
+    const res = await fetch(`/api/pavimentos?setor_id=${sectorId}`);
+    setFloors(await res.json());
+  };
+
+  const fetchEnvironments = async (floorId: number) => {
+    const res = await fetch(`/api/ambientes?pavimento_id=${floorId}`);
+    setEnvironments(await res.json());
+  };
+
+  const fetchIndependentServices = async () => {
+    const res = await fetch('/api/servicos-ambiente?ambiente_id=null');
+    setIndependentServices(await res.json());
+  };
+
+  const fetchServices = async (envId?: number) => {
+    const url = envId ? `/api/servicos-ambiente?ambiente_id=${envId}` : '/api/servicos-ambiente';
+    const res = await fetch(url);
+    setServices(await res.json());
+  };
+
+  const fetchGroups = async (page: number) => {
+    const res = await fetch(`/api/grupos-atividade?page=${page}&limit=${itemsPerPage}`);
+    const data = await res.json();
+    setGroups(data.data);
+    setTotalGroups(data.total);
+  };
+
+  const fetchActivities = async (groupId: number | null, status: string, prazo: string, page: number) => {
+    let url = `/api/atividades?page=${page}&limit=${itemsPerPage}&`;
     if (groupId) url += `grupo_id=${groupId}&`;
     if (status) url += `status=${status}&`;
     if (prazo) url += `prazo_max=${prazo}&`;
     const res = await fetch(url);
-    setActivities(await res.json());
+    const data = await res.json();
+    setActivities(data.data);
+    setTotalActivities(data.total);
   };
 
   const fetchCompositions = async (activityId: number) => {
@@ -101,10 +181,17 @@ export default function Activities() {
     if (modalType === 'activity') {
       url = editingId ? `/api/atividades/${editingId}` : '/api/atividades';
       if (!editingId) body.grupo_atividade_id = selectedGroup;
+      // Add selected services to link
+      if (selectedServiceIds.length > 0) {
+        body.linkServiceIds = selectedServiceIds;
+      }
     }
     if (modalType === 'composition') {
       url = editingId ? `/api/composicao-atividade/${editingId}` : '/api/composicao-atividade';
       if (!editingId) body.atividade_id = selectedActivity;
+    }
+    if (modalType === 'service') {
+      url = editingId ? `/api/servicos-ambiente/${editingId}` : '/api/servicos-ambiente';
     }
 
     const res = await fetch(url, {
@@ -116,34 +203,60 @@ export default function Activities() {
       body: JSON.stringify(body)
     });
 
-    if (res.ok) {
-      setIsModalOpen(false);
-      setFormData({});
-      setEditingId(null);
-      if (modalType === 'group') fetchGroups();
-      if (modalType === 'activity') fetchActivities(selectedGroup, filterStatus, filterPrazo);
-      if (modalType === 'composition') fetchCompositions(selectedActivity!);
-    }
+      if (res.ok) {
+        setIsModalOpen(false);
+        setFormData({});
+        setEditingId(null);
+        if (modalType === 'group') fetchGroups(currentGroupPage);
+        if (modalType === 'activity') {
+          fetchActivities(selectedGroup, filterStatus, filterPrazo, currentActivityPage);
+          fetchIndependentServices();
+          setSelectedServiceIds([]);
+        }
+        if (modalType === 'composition') fetchCompositions(selectedActivity!);
+        if (modalType === 'service') {
+          const act = activities.find(a => a.id === selectedActivity);
+          fetchServices(act?.ambiente_id);
+          fetchIndependentServices();
+        }
+      }
   };
 
-  const handleDelete = async (type: string, id: number) => {
-    if (!confirm('Tem certeza que deseja excluir este item?')) return;
+  const handleDelete = (type: string, id: number) => {
+    const itemType = type === 'group' ? 'Grupo' : type === 'activity' ? 'Atividade' : type === 'composition' ? 'Composição' : 'Serviço';
     
-    let url = '';
-    if (type === 'group') url = `/api/grupos-atividade/${id}`;
-    if (type === 'activity') url = `/api/atividades/${id}`;
-    if (type === 'composition') url = `/api/composicao-atividade/${id}`;
+    setConfirmConfig({
+      title: `Excluir ${itemType}?`,
+      message: `Tem certeza que deseja excluir este ${itemType.toLowerCase()}? Esta ação não pode ser desfeita.`,
+      onConfirm: async () => {
+        let url = '';
+        if (type === 'group') url = `/api/grupos-atividade/${id}`;
+        if (type === 'activity') url = `/api/atividades/${id}`;
+        if (type === 'composition') url = `/api/composicao-atividade/${id}`;
+        if (type === 'service') url = `/api/servicos-ambiente/${id}`;
 
-    const res = await fetch(url, {
-      method: 'DELETE',
-      headers: { 'x-user-role': 'admin' }
+        try {
+          const res = await fetch(url, {
+            method: 'DELETE',
+            headers: { 'x-user-role': 'admin' }
+          });
+
+          if (res.ok) {
+            if (type === 'group') { fetchGroups(currentGroupPage); setSelectedGroup(null); }
+            if (type === 'activity') { fetchActivities(selectedGroup, filterStatus, filterPrazo, currentActivityPage); setSelectedActivity(null); }
+            if (type === 'composition') { fetchCompositions(selectedActivity!); }
+            if (type === 'service') { 
+              const act = activities.find(a => a.id === selectedActivity);
+              fetchServices(act?.ambiente_id);
+              fetchIndependentServices();
+            }
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }
     });
-
-    if (res.ok) {
-      if (type === 'group') { fetchGroups(); setSelectedGroup(null); }
-      if (type === 'activity') { fetchActivities(selectedGroup, filterStatus, filterPrazo); setSelectedActivity(null); }
-      if (type === 'composition') { fetchCompositions(selectedActivity!); }
-    }
+    setIsConfirmOpen(true);
   };
 
   const openEdit = (type: any, item: any) => {
@@ -169,7 +282,7 @@ export default function Activities() {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Groups Column */}
         <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
           <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
@@ -205,6 +318,13 @@ export default function Activities() {
               </div>
             ))}
           </div>
+          <Pagination 
+            currentPage={currentGroupPage}
+            totalItems={totalGroups}
+            itemsPerPage={itemsPerPage}
+            onPageChange={setCurrentGroupPage}
+            compact
+          />
         </div>
 
         {/* Activities Column */}
@@ -284,6 +404,13 @@ export default function Activities() {
             ))}
             {activities.length === 0 && <p className="p-8 text-center text-slate-400 text-sm italic">Nenhuma atividade encontrada</p>}
           </div>
+          <Pagination 
+            currentPage={currentActivityPage}
+            totalItems={totalActivities}
+            itemsPerPage={itemsPerPage}
+            onPageChange={setCurrentActivityPage}
+            compact
+          />
         </div>
 
         {/* Composition Column */}
@@ -364,6 +491,39 @@ export default function Activities() {
             )}
           </div>
         </div>
+
+        {/* Services Column */}
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+          <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+            <h3 className="font-bold text-slate-700 flex items-center gap-2">
+              <Wrench size={18} className="text-rose-500" /> Serviços
+            </h3>
+            <button onClick={() => { setModalType('service'); setIsModalOpen(true); }} className="p-1 hover:bg-rose-100 text-rose-600 rounded-lg">
+              <Plus size={18} />
+            </button>
+          </div>
+          <div className="p-2 space-y-1 max-h-[600px] overflow-y-auto">
+            {services.map(s => (
+              <div key={s.id} className="group relative">
+                <div className="w-full text-left px-4 py-3 rounded-xl transition-all flex items-center justify-between hover:bg-slate-50 text-slate-600">
+                  <div>
+                    <span className="font-medium block">{s.nome_servico}</span>
+                    <span className="text-[10px] uppercase font-bold opacity-60">{s.grupo_servico} - {s.unidade_medida}</span>
+                  </div>
+                </div>
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => openEdit('service', s)} className="p-1.5 hover:bg-rose-100 text-rose-600 rounded-lg">
+                    <Edit2 size={14} />
+                  </button>
+                  <button onClick={() => handleDelete('service', s.id)} className="p-1.5 hover:bg-red-100 text-red-600 rounded-lg">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+            {services.length === 0 && <p className="p-8 text-center text-slate-400 text-sm italic">Nenhum serviço cadastrado</p>}
+          </div>
+        </div>
       </div>
 
       {/* Modal */}
@@ -414,6 +574,53 @@ export default function Activities() {
                       onChange={e => setFormData({ ...formData, nome_atividade: e.target.value })}
                     />
                   </div>
+
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">Setor</label>
+                      <select 
+                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                        value={formData.setor_id || ''}
+                        onChange={e => {
+                          const val = e.target.value ? Number(e.target.value) : null;
+                          setFormData({ ...formData, setor_id: val, pavimento_id: null, ambiente_id: null });
+                          if (val) fetchFloors(val);
+                        }}
+                      >
+                        <option value="">Selecione...</option>
+                        {sectors.map(s => <option key={s.id} value={s.id}>{s.nome_setor}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">Pavimento</label>
+                      <select 
+                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                        value={formData.pavimento_id || ''}
+                        onChange={e => {
+                          const val = e.target.value ? Number(e.target.value) : null;
+                          setFormData({ ...formData, pavimento_id: val, ambiente_id: null });
+                          if (val) fetchEnvironments(val);
+                        }}
+                        disabled={!formData.setor_id}
+                      >
+                        <option value="">Selecione...</option>
+                        {floors.map(p => <option key={p.id} value={p.id}>{p.nome_pavimento}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">Ambiente</label>
+                      <select 
+                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                        value={formData.ambiente_id || ''}
+                        onChange={e => setFormData({ ...formData, ambiente_id: e.target.value ? Number(e.target.value) : null })}
+                        disabled={!formData.pavimento_id}
+                      >
+                        <option value="">Selecione...</option>
+                        {environments.map(amb => <option key={amb.id} value={amb.id}>{amb.nome_ambiente}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label className="text-sm font-semibold text-slate-700">Unidade</label>
@@ -504,6 +711,96 @@ export default function Activities() {
                       onChange={e => setFormData({ ...formData, descricao: e.target.value })}
                     />
                   </div>
+
+                  {!editingId && independentServices.length > 0 && (
+                    <div className="space-y-2 pt-2 border-t border-slate-100">
+                      <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                        <Wrench size={14} className="text-rose-500" /> Vincular Serviços Existentes
+                      </label>
+                      <p className="text-[10px] text-slate-500 mb-2">Selecione serviços independentes para vincular ao ambiente desta atividade.</p>
+                      <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto p-1">
+                        {independentServices.map(s => (
+                          <label key={s.id} className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg border border-slate-100 cursor-pointer transition-colors">
+                            <input 
+                              type="checkbox" 
+                              className="w-4 h-4 rounded border-slate-300 text-rose-600 focus:ring-rose-500"
+                              checked={selectedServiceIds.includes(s.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedServiceIds([...selectedServiceIds, s.id]);
+                                } else {
+                                  setSelectedServiceIds(selectedServiceIds.filter(id => id !== s.id));
+                                }
+                              }}
+                            />
+                            <div className="flex-1">
+                              <span className="text-xs font-medium text-slate-700 block">{s.nome_servico}</span>
+                              <span className="text-[9px] text-slate-400 uppercase font-bold">{s.grupo_servico} - {s.unidade_medida}</span>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {modalType === 'service' && (
+                <>
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700">Nome do Serviço</label>
+                    <input 
+                      required
+                      type="text" 
+                      className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                      value={formData.nome_servico || ''}
+                      onChange={e => setFormData({ ...formData, nome_servico: e.target.value })}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">Grupo</label>
+                      <input 
+                        type="text" 
+                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                        value={formData.grupo_servico || ''}
+                        onChange={e => setFormData({ ...formData, grupo_servico: e.target.value })}
+                        placeholder="Ex: Alvenaria, Pintura..."
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">Unidade</label>
+                      <input 
+                        required
+                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                        value={formData.unidade_medida || ''}
+                        onChange={e => setFormData({ ...formData, unidade_medida: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">Qtd. Total Prevista</label>
+                      <input 
+                        required
+                        type="number" 
+                        step="0.01"
+                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                        value={formData.quantidade_total_prevista || ''}
+                        onChange={e => setFormData({ ...formData, quantidade_total_prevista: Number(e.target.value) })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">Qtd. Executada</label>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                        value={formData.quantidade_executada || 0}
+                        onChange={e => setFormData({ ...formData, quantidade_executada: Number(e.target.value) })}
+                      />
+                    </div>
+                  </div>
                 </>
               )}
 
@@ -573,6 +870,14 @@ export default function Activities() {
           </div>
         </div>
       )}
+
+      <ConfirmationModal 
+        isOpen={isConfirmOpen}
+        onClose={() => setIsConfirmOpen(false)}
+        onConfirm={confirmConfig.onConfirm}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+      />
     </div>
   );
 }

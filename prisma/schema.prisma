@@ -1,0 +1,401 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../obra_control.db"
+}
+
+model User {
+  id       Int      @id @default(autoincrement())
+  username String   @unique
+  password String
+  role     String
+  name     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("users")
+}
+
+model Employee {
+  id                Int      @id @default(autoincrement())
+  code              String?
+  name              String
+  role              String
+  document          String?
+  phone             String?
+  isRegistered      Int      @default(1) @map("is_registered")
+  baseSalary        Float?   @map("base_salary")
+  admissionDate     String?  @map("admission_date")
+  bankName          String?  @map("bank_name")
+  bankAgency        String?  @map("bank_agency")
+  bankOperation     String?  @map("bank_operation")
+  bankAccount       String?  @map("bank_account")
+  bankObservations  String?  @map("bank_observations")
+  vacationPreview   String?  @map("vacation_preview")
+  photo             String?
+  status            String   @default("Ativo")
+  resignationDate   String?  @map("resignation_date")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  frequencies       Frequency[]
+  payrolls          Payroll[]
+  executions        DailyExecution[]
+  medicalCertificates MedicalCertificate[]
+
+  @@map("employees")
+}
+
+model JobRole {
+  id          Int      @id @default(autoincrement())
+  name        String
+  salary      Float
+  paymentType String   @map("payment_type")
+
+  @@map("job_roles")
+}
+
+model Frequency {
+  id           Int      @id @default(autoincrement())
+  employeeId   Int      @map("employee_id")
+  date         String
+  status       String
+  atestatoDays Int      @default(0) @map("atestato_days")
+  observations String?
+  
+  employee     Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("frequency")
+}
+
+model Payroll {
+  id          Int      @id @default(autoincrement())
+  employeeId  Int      @map("employee_id")
+  month       String
+  fortnight   Int
+  type        String
+  amount      Float
+  description String?
+  status      String   @default("Pendente")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  employee    Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("payroll")
+}
+
+model Sector {
+  id         Int      @id @default(autoincrement())
+  name       String   @map("nome_setor")
+  description String?  @map("descricao")
+
+  floors     Floor[]
+  environments Environment[]
+
+  @@map("setores")
+}
+
+model Floor {
+  id          Int      @id @default(autoincrement())
+  sectorId    Int      @map("setor_id")
+  name        String   @map("nome_pavimento")
+  description String?  @map("descricao")
+
+  sector      Sector   @relation(fields: [sectorId], references: [id])
+  environments Environment[]
+
+  @@map("pavimentos")
+}
+
+model Environment {
+  id          Int      @id @default(autoincrement())
+  sectorId    Int      @map("setor_id")
+  floorId     Int      @map("pavimento_id")
+  name        String   @map("nome_ambiente")
+  type        String   @map("tipo_ambiente")
+  totalArea   Float    @map("area_total")
+  ceilingArea Float?   @map("area_teto")
+  wallArea    Float?   @map("area_parede")
+  piso        String?
+  parede      String?
+  teto        String?
+  esquadrias  String?
+  metais      String?
+  loucas      String?
+  description String?  @map("descricao")
+  
+  hasDoors            Boolean @default(false) @map("tem_portas")
+  hasWindows          Boolean @default(false) @map("tem_janelas")
+  hasElectricalPoints Boolean @default(false) @map("tem_pontos_eletricos")
+  hasSanitaryPoints   Boolean @default(false) @map("tem_pontos_sanitarios")
+  hasHydraulicPoints  Boolean @default(false) @map("tem_pontos_hidraulicos")
+
+  sector      Sector   @relation(fields: [sectorId], references: [id])
+  floor       Floor    @relation(fields: [floorId], references: [id])
+  
+  doors             Door[]
+  windows           Window[]
+  electricalPoints  ElectricalPoint[]
+  sanitaryPoints    SanitaryPoint[]
+  hydraulicPoints   HydraulicPoint[]
+  
+  services    Service[]
+  envServices EnvironmentService[]
+  executions  DailyExecution[]
+  plannings   Planning[]
+
+  @@map("ambientes")
+}
+
+model Door {
+  id            Int      @id @default(autoincrement())
+  environmentId Int      @map("ambiente_id")
+  width         Float
+  height        Float
+  quantity      Int
+  
+  environment   Environment @relation(fields: [environmentId], references: [id])
+  
+  @@map("portas_ambiente")
+}
+
+model Window {
+  id            Int      @id @default(autoincrement())
+  environmentId Int      @map("ambiente_id")
+  width         Float
+  height        Float
+  sillHeight    Float    @map("peitoril")
+  quantity      Int
+  
+  environment   Environment @relation(fields: [environmentId], references: [id])
+  
+  @@map("janelas_ambiente")
+}
+
+model ElectricalPoint {
+  id            Int      @id @default(autoincrement())
+  environmentId Int      @map("ambiente_id")
+  type          String   // Tomada, Interruptor, Interruptor + Tomada, Luminária, Ar Condicionado
+  quantity      Int
+  
+  environment   Environment @relation(fields: [environmentId], references: [id])
+  
+  @@map("pontos_eletricos_ambiente")
+}
+
+model SanitaryPoint {
+  id            Int      @id @default(autoincrement())
+  environmentId Int      @map("ambiente_id")
+  type          String   // Piso, Parede
+  quantity      Int
+  
+  environment   Environment @relation(fields: [environmentId], references: [id])
+  
+  @@map("pontos_sanitarios_ambiente")
+}
+
+model HydraulicPoint {
+  id            Int      @id @default(autoincrement())
+  environmentId Int      @map("ambiente_id")
+  type          String   // Piso, Parede
+  quantity      Int
+  
+  environment   Environment @relation(fields: [environmentId], references: [id])
+  
+  @@map("pontos_hidraulicos_ambiente")
+}
+
+model EnvironmentService {
+  id            Int      @id @default(autoincrement())
+  environmentId Int      @map("ambiente_id")
+  serviceId     Int      @map("service_id")
+  
+  environment   Environment @relation(fields: [environmentId], references: [id])
+  service       Service     @relation(fields: [serviceId], references: [id])
+  
+  @@map("environment_services")
+}
+
+model Service {
+  id              Int      @id @default(autoincrement())
+  environmentId   Int?     @map("ambiente_id") // Optional now as services can be independent
+  name            String   @map("nome_servico")
+  group           String?  @map("grupo_servico")
+  unit            String   @map("unidade_medida")
+  totalQuantity   Float    @map("quantidade_total_prevista")
+  executedQuantity Float    @map("quantidade_executada") @default(0)
+  remainingQuantity Float   @map("quantidade_restante") @default(0)
+  description     String?  @map("descricao")
+
+  environment     Environment? @relation(fields: [environmentId], references: [id])
+  envServices     EnvironmentService[]
+
+  @@map("servicos_ambiente")
+}
+
+model MedicalCertificate {
+  id            Int      @id @default(autoincrement())
+  employeeId    Int      @map("employee_id")
+  type          String   // Atestado Médico, Declaração de Comparecimento
+  startDate     String   @map("start_date")
+  daysAway      Int      @map("days_away")
+  returnDate    String   @map("return_date")
+  createdAt     DateTime @default(now()) @map("created_at")
+  
+  employee      Employee @relation(fields: [employeeId], references: [id])
+  
+  @@map("medical_certificates")
+}
+
+model ActivityGroup {
+  id          Int      @id @default(autoincrement())
+  name        String   @map("nome_grupo")
+  description String?  @map("descricao")
+
+  activities  Activity[]
+
+  @@map("grupos_atividade")
+}
+
+model Activity {
+  id                Int      @id @default(autoincrement())
+  groupId           Int      @map("grupo_atividade_id")
+  name              String   @map("nome_atividade")
+  unit              String   @map("unidade_medida")
+  deadline          Int?     @map("prazo_execucao")
+  productivity      Float?   @map("produtividade_profissional")
+  paymentValue      Float?   @map("valor_parametro")
+  paymentType       String?  @map("tipo_pagamento")
+  description       String?  @map("descricao")
+  defaultQuantity   Float?   @map("quantidade_padrao")
+  status            String   @default("Ativo")
+
+  group             ActivityGroup @relation(fields: [groupId], references: [id])
+  compositions      Composition[]
+  executions        DailyExecution[]
+  plannings         Planning[]
+
+  @@map("atividades")
+}
+
+model Composition {
+  id          Int      @id @default(autoincrement())
+  activityId  Int      @map("atividade_id")
+  type        String   @map("tipo_item")
+  description String
+  quantity    Float
+  unit        String   @map("unidade_medida")
+
+  activity    Activity @relation(fields: [activityId], references: [id])
+
+  @@map("composicao_atividade")
+}
+
+model DailyExecution {
+  id                Int      @id @default(autoincrement())
+  date              String   @map("data_execucao")
+  employeeId        Int      @map("funcionario_id")
+  activityId        Int      @map("atividade_id")
+  environmentId     Int      @map("ambiente_id")
+  executedQuantity  Float    @map("quantidade_executada")
+  observations      String?  @map("observacoes")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  employee          Employee    @relation(fields: [employeeId], references: [id])
+  activity          Activity    @relation(fields: [activityId], references: [id])
+  environment       Environment @relation(fields: [environmentId], references: [id])
+
+  @@map("execucao_diaria")
+}
+
+model Inventory {
+  id              Int      @id @default(autoincrement())
+  description     String
+  currentQuantity Float    @map("quantidade_atual")
+  minQuantity     Float    @map("quantidade_minima")
+  unit            String   @map("unidade_medida")
+  type            String   @map("tipo_item")
+
+  @@map("estoque")
+}
+
+model Checklist {
+  id        Int      @id @default(autoincrement())
+  task      String
+  status    String
+  category  String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("checklists")
+}
+
+// --- NEW MODULES ---
+
+model Planning {
+  id              Int      @id @default(autoincrement())
+  startDate       String   @map("start_date")
+  endDate         String   @map("end_date")
+  activityId      Int      @map("activity_id")
+  environmentId   Int      @map("environment_id")
+  targetQuantity  Float    @map("target_quantity")
+  status          String   @default("Pendente") // Pendente, Em Andamento, Concluído, Atrasado
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  activity        Activity    @relation(fields: [activityId], references: [id])
+  environment     Environment @relation(fields: [environmentId], references: [id])
+
+  @@map("planning")
+}
+
+model Expense {
+  id            Int      @id @default(autoincrement())
+  category      String   // Mão de Obra, Material, Equipamento, Transporte, Outros
+  description   String
+  amount        Float
+  date          String
+  paymentMethod String?  @map("payment_method")
+  referenceId   Int?     @map("reference_id")
+  referenceType String?  @map("reference_type")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("expenses")
+}
+
+model ConstructionDiary {
+  id            Int      @id @default(autoincrement())
+  date          String   @unique
+  weather       String   // Ensolarado, Nublado, Chuvoso
+  observations  String?
+  photos        String?  // JSON array of URLs
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  workers       DiaryWorker[]
+  activities    DiaryActivity[]
+
+  @@map("construction_diary")
+}
+
+model DiaryWorker {
+  id        Int      @id @default(autoincrement())
+  diaryId   Int      @map("diary_id")
+  role      String
+  count     Int
+
+  diary     ConstructionDiary @relation(fields: [diaryId], references: [id])
+
+  @@map("diary_workers")
+}
+
+model DiaryActivity {
+  id          Int      @id @default(autoincrement())
+  diaryId     Int      @map("diary_id")
+  activityId  Int      @map("activity_id")
+
+  diary       ConstructionDiary @relation(fields: [diaryId], references: [id])
+
+  @@map("diary_activities")
+}

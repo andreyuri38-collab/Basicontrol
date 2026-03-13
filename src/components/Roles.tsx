@@ -9,6 +9,8 @@ import {
   Calendar,
   AlertTriangle
 } from 'lucide-react';
+import { Pagination } from './Pagination';
+import { ConfirmationModal } from './ConfirmationModal';
 
 interface JobRole {
   id: number;
@@ -19,6 +21,9 @@ interface JobRole {
 
 export default function Roles({ userRole }: { userRole?: string }) {
   const [roles, setRoles] = useState<JobRole[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [selectedRole, setSelectedRole] = useState<JobRole | null>(null);
@@ -32,13 +37,16 @@ export default function Roles({ userRole }: { userRole?: string }) {
   });
 
   useEffect(() => {
-    fetchRoles();
-  }, []);
+    fetchRoles(currentPage);
+  }, [currentPage]);
 
-  const fetchRoles = () => {
-    fetch('/api/job-roles')
+  const fetchRoles = (page: number) => {
+    fetch(`/api/job-roles?page=${page}&limit=${itemsPerPage}`)
       .then(res => res.json())
-      .then(setRoles);
+      .then(res => {
+        setRoles(res.data);
+        setTotalItems(res.total);
+      });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -65,7 +73,7 @@ export default function Roles({ userRole }: { userRole?: string }) {
       setIsModalOpen(false);
       setIsEditing(false);
       setSelectedRole(null);
-      fetchRoles();
+      fetchRoles(currentPage);
       setFormData({ name: '', salary: '', payment_type: 'monthly' });
     });
   };
@@ -91,11 +99,14 @@ export default function Roles({ userRole }: { userRole?: string }) {
     fetch(`/api/job-roles/${roleToDelete.id}`, {
       method: 'DELETE',
       headers: { 'x-user-role': userRole || '' }
-    }).then(res => {
+    }).then(async (res) => {
       if (res.ok) {
-        fetchRoles();
+        fetchRoles(currentPage);
         setIsDeleteModalOpen(false);
         setRoleToDelete(null);
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Erro ao excluir função');
       }
     });
   };
@@ -176,6 +187,13 @@ export default function Roles({ userRole }: { userRole?: string }) {
           </div>
         ))}
       </div>
+
+      <Pagination 
+        currentPage={currentPage}
+        totalItems={totalItems}
+        itemsPerPage={itemsPerPage}
+        onPageChange={setCurrentPage}
+      />
 
       {/* Role Modal */}
       {isModalOpen && (
@@ -262,37 +280,17 @@ export default function Roles({ userRole }: { userRole?: string }) {
         </div>
       )}
 
-      {/* Delete Modal */}
-      {isDeleteModalOpen && roleToDelete && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
-            <div className="p-8 text-center">
-              <div className="w-20 h-20 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
-                <AlertTriangle size={40} />
-              </div>
-              <h3 className="text-xl font-bold text-slate-900 mb-2">Excluir Função?</h3>
-              <p className="text-slate-500 mb-8">
-                Você está prestes a excluir a função <span className="font-bold text-slate-900">{roleToDelete.name}</span>. 
-                Isso não afetará os salários já cadastrados nos funcionários, mas a função não estará mais disponível para novos cadastros.
-              </p>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button 
-                  onClick={() => setIsDeleteModalOpen(false)}
-                  className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 rounded-2xl font-bold hover:bg-slate-50 transition-all"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  onClick={confirmDelete}
-                  className="flex-1 px-6 py-3 bg-red-500 text-white rounded-2xl font-bold hover:bg-red-600 transition-all shadow-lg shadow-red-500/25"
-                >
-                  Sim, Excluir
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Confirmation Modal */}
+      <ConfirmationModal 
+        isOpen={isDeleteModalOpen}
+        onClose={() => {
+          setIsDeleteModalOpen(false);
+          setRoleToDelete(null);
+        }}
+        onConfirm={confirmDelete}
+        title="Excluir Função?"
+        message={roleToDelete ? `Você está prestes a excluir a função ${roleToDelete.name}. Isso não afetará os salários já cadastrados nos funcionários, mas a função não estará mais disponível para novos cadastros.` : ''}
+      />
     </div>
   );
 }

@@ -14,6 +14,8 @@ import {
   Trash2
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { Pagination } from './Pagination';
+import { ConfirmationModal } from './ConfirmationModal';
 
 interface Employee {
   id: number;
@@ -49,8 +51,23 @@ export default function DailyTasks() {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [executions, setExecutions] = useState<Execution[]>([]);
+  const [totalExecutions, setTotalExecutions] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
   
   const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  // Confirmation Modal State
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
   const [loading, setLoading] = useState(false);
   const [filterDate, setFilterDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   
@@ -65,39 +82,49 @@ export default function DailyTasks() {
 
   useEffect(() => {
     fetchData();
-    fetchExecutions();
-  }, [filterDate]);
+    fetchExecutions(currentPage);
+  }, [filterDate, currentPage]);
 
   const fetchData = async () => {
     const [empRes, actRes, envRes] = await Promise.all([
-      fetch('/api/employees'),
-      fetch('/api/atividades'),
-      fetch('/api/ambientes')
+      fetch('/api/v2/employees?status=Ativo&limit=1000'),
+      fetch('/api/atividades?limit=1000'),
+      fetch('/api/ambientes?limit=1000')
     ]);
-    setEmployees(await empRes.json());
-    setActivities(await actRes.json());
-    setEnvironments(await envRes.json());
+    const empData = await empRes.json();
+    const actData = await actRes.json();
+    const envData = await envRes.json();
+    setEmployees(empData.data || []);
+    setActivities(actData.data || []);
+    setEnvironments(envData.data || []);
   };
 
-  const fetchExecutions = async () => {
-    const res = await fetch(`/api/execucao-diaria?data=${filterDate}`);
-    setExecutions(await res.json());
+  const fetchExecutions = async (page: number) => {
+    const res = await fetch(`/api/execucao-diaria?data=${filterDate}&page=${page}&limit=${itemsPerPage}`);
+    const data = await res.json();
+    setExecutions(data.data);
+    setTotalExecutions(data.total);
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Deseja realmente excluir este registro de execução? O progresso no ambiente será revertido.')) return;
-    
-    try {
-      const res = await fetch(`/api/execucao-diaria/${id}`, {
-        method: 'DELETE',
-        headers: { 'x-user-role': 'admin' }
-      });
-      if (res.ok) {
-        fetchExecutions();
+  const handleDelete = (id: number) => {
+    setConfirmConfig({
+      title: 'Excluir Registro de Execução?',
+      message: 'Deseja realmente excluir este registro de execução? O progresso no ambiente será revertido. Esta ação não pode ser desfeita.',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/execucao-diaria/${id}`, {
+            method: 'DELETE',
+            headers: { 'x-user-role': 'admin' }
+          });
+          if (res.ok) {
+            fetchExecutions(currentPage);
+          }
+        } catch (err) {
+          console.error(err);
+        }
       }
-    } catch (err) {
-      console.error(err);
-    }
+    });
+    setIsConfirmOpen(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -123,7 +150,7 @@ export default function DailyTasks() {
           quantidade_executada: '',
           observacoes: ''
         });
-        fetchExecutions();
+        fetchExecutions(currentPage);
       }
     } catch (err) {
       console.error(err);
@@ -212,6 +239,12 @@ export default function DailyTasks() {
                 </div>
               )}
             </div>
+            <Pagination 
+              currentPage={currentPage}
+              totalItems={totalExecutions}
+              itemsPerPage={itemsPerPage}
+              onPageChange={setCurrentPage}
+            />
           </div>
         </div>
 
@@ -359,6 +392,14 @@ export default function DailyTasks() {
           </div>
         </div>
       )}
+
+      <ConfirmationModal 
+        isOpen={isConfirmOpen}
+        onClose={() => setIsConfirmOpen(false)}
+        onConfirm={confirmConfig.onConfirm}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+      />
     </div>
   );
 }

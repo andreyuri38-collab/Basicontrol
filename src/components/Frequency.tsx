@@ -19,6 +19,8 @@ import {
   RefreshCw,
   Trash2
 } from 'lucide-react';
+import { Pagination } from './Pagination';
+import { ConfirmationModal } from './ConfirmationModal';
 import { 
   format, 
   addDays, 
@@ -54,6 +56,9 @@ export default function Frequency({ userRole }: FrequencyProps) {
   
   const [employees, setEmployees] = useState<any[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<any[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
   const [attendanceMap, setAttendanceMap] = useState<any>({});
   const [loading, setLoading] = useState(false);
   const [isGDriveConnected, setIsGDriveConnected] = useState(false);
@@ -75,16 +80,16 @@ export default function Frequency({ userRole }: FrequencyProps) {
   };
 
   useEffect(() => {
-    fetchAttendance();
-  }, [selectedDate, startDate, endDate, filterMode, selectedEmployeeId, selectedRole]);
+    fetchAttendance(currentPage);
+  }, [selectedDate, startDate, endDate, filterMode, selectedEmployeeId, selectedRole, currentPage]);
 
   const fetchEmployees = () => {
-    fetch('/api/employees')
+    fetch('/api/v2/employees?status=Ativo&limit=1000') // Fetch only active for selection
       .then(res => res.json())
-      .then(setEmployees);
+      .then(res => setEmployees(res.data || []));
   };
 
-  const fetchAttendance = () => {
+  const fetchAttendance = (page: number) => {
     setLoading(true);
     let start = '';
     let end = '';
@@ -104,10 +109,12 @@ export default function Frequency({ userRole }: FrequencyProps) {
     const employeeParam = selectedEmployeeId !== 'all' ? `&employee_id=${selectedEmployeeId}` : '';
     const roleParam = selectedRole !== 'all' ? `&role=${selectedRole}` : '';
     
-    fetch(`/api/frequency?start=${start}&end=${end}${employeeParam}${roleParam}`)
+    fetch(`/api/frequency?start=${start}&end=${end}${employeeParam}${roleParam}&page=${page}&limit=${itemsPerPage}`)
       .then(res => res.json())
-      .then(data => {
+      .then(res => {
+        const data = res.data || [];
         setAttendanceRecords(data);
+        setTotalItems(res.total || 0);
         
         // For daily view, we need a map for easy lookup
         if (filterMode === 'day') {
@@ -121,25 +128,76 @@ export default function Frequency({ userRole }: FrequencyProps) {
       });
   };
 
+  const [isMedicalModalOpen, setIsMedicalModalOpen] = useState(false);
+  
+  // Confirmation Modal State
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
+  const [medicalData, setMedicalData] = useState({
+    employeeId: 0,
+    employeeName: '',
+    type: 'Atestado Médico',
+    startDate: format(new Date(), 'yyyy-MM-dd'),
+    days: 1,
+    returnDate: format(addDays(new Date(), 1), 'yyyy-MM-dd')
+  });
+
+  useEffect(() => {
+    const start = parseISO(medicalData.startDate);
+    const end = addDays(start, medicalData.days);
+    setMedicalData(prev => ({ ...prev, returnDate: format(end, 'yyyy-MM-dd') }));
+  }, [medicalData.startDate, medicalData.days]);
+
   const handleStatusChange = (employeeId: number, status: string) => {
     const dateStr = format(selectedDate, 'yyyy-MM-dd');
     
+    if (status === 'Atestado') {
+      const emp = employees.find(e => e.id === employeeId);
+      setMedicalData({
+        employeeId,
+        employeeName: emp?.name || '',
+        type: 'Atestado Médico',
+        startDate: dateStr,
+        days: 1,
+        returnDate: format(addDays(parseISO(dateStr), 1), 'yyyy-MM-dd')
+      });
+      setIsMedicalModalOpen(true);
+      return;
+    }
+
     if (status === 'Remover') {
-      if (!confirm('Deseja realmente remover o registro de frequência para este dia?')) return;
-      fetch(`/api/frequency?employee_id=${employeeId}&date=${dateStr}`, {
-        method: 'DELETE',
-        headers: { 'x-user-role': userRole || '' }
-      }).then(res => {
-        if (res.ok) {
-          if (filterMode === 'day') {
-            const newMap = { ...attendanceMap };
-            delete newMap[employeeId];
-            setAttendanceMap(newMap);
-          } else {
-            fetchAttendance();
+      setConfirmConfig({
+        title: 'Remover Frequência?',
+        message: 'Deseja realmente remover o registro de frequência para este dia? Esta ação não pode ser desfeita.',
+        onConfirm: async () => {
+          try {
+            const res = await fetch(`/api/frequency?employee_id=${employeeId}&date=${dateStr}`, {
+              method: 'DELETE',
+              headers: { 'x-user-role': userRole || '' }
+            });
+            if (res.ok) {
+              if (filterMode === 'day') {
+                const newMap = { ...attendanceMap };
+                delete newMap[employeeId];
+                setAttendanceMap(newMap);
+              } else {
+                fetchAttendance(currentPage);
+              }
+            }
+          } catch (err) {
+            console.error(err);
           }
         }
       });
+      setIsConfirmOpen(true);
       return;
     }
 
@@ -170,7 +228,7 @@ export default function Frequency({ userRole }: FrequencyProps) {
           [employeeId]: payload
         });
       } else {
-        fetchAttendance();
+        fetchAttendance(currentPage);
       }
     });
   };
@@ -182,13 +240,59 @@ export default function Frequency({ userRole }: FrequencyProps) {
     const isWeekend = [0, 6].includes(selectedDate.getDay());
     const defaultStatus = isWeekend ? 'Folga' : 'Presente';
     
-    if (!confirm(`Deseja marcar os ${visibleEmployees.length} funcionários como '${defaultStatus}' para o dia ${format(selectedDate, 'dd/MM/yyyy')}?`)) return;
-    
-    const dateStr = format(selectedDate, 'yyyy-MM-dd');
+    setConfirmConfig({
+      title: 'Marcar Todos?',
+      message: `Deseja marcar os ${visibleEmployees.length} funcionários como '${defaultStatus}' para o dia ${format(selectedDate, 'dd/MM/yyyy')}?`,
+      onConfirm: async () => {
+        const dateStr = format(selectedDate, 'yyyy-MM-dd');
+        setLoading(true);
+        
+        try {
+          await Promise.all(visibleEmployees.map(employee => 
+            fetch('/api/frequency', {
+              method: 'POST',
+              headers: { 
+                'Content-Type': 'application/json',
+                'x-user-role': userRole || ''
+              },
+              body: JSON.stringify({
+                employee_id: employee.id,
+                date: dateStr,
+                status: defaultStatus,
+                atestato_days: 0,
+                observations: ''
+              })
+            })
+          ));
+          fetchAttendance(currentPage);
+        } catch (error) {
+          console.error(error);
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
+    setIsConfirmOpen(true);
+  };
+
+  const handleClearDates = () => {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    setStartDate(today);
+    setEndDate(today);
+  };
+
+  const handleMedicalSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setLoading(true);
     
     try {
-      await Promise.all(visibleEmployees.map(employee => 
+      const start = parseISO(medicalData.startDate);
+      const days = eachDayOfInterval({
+        start,
+        end: addDays(start, medicalData.days - 1)
+      });
+
+      await Promise.all(days.map(day => 
         fetch('/api/frequency', {
           method: 'POST',
           headers: { 
@@ -196,26 +300,38 @@ export default function Frequency({ userRole }: FrequencyProps) {
             'x-user-role': userRole || ''
           },
           body: JSON.stringify({
-            employee_id: employee.id,
-            date: dateStr,
-            status: defaultStatus,
-            atestato_days: 0,
-            observations: ''
+            employee_id: medicalData.employeeId,
+            date: format(day, 'yyyy-MM-dd'),
+            status: 'Atestado',
+            atestato_days: medicalData.days,
+            observations: medicalData.type
           })
         })
       ));
-      fetchAttendance();
+
+      // Also save to medical_certificates table if it exists (Prisma schema has it)
+      await fetch('/api/v2/attendance/medical-certificate', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-user-role': userRole || ''
+        },
+        body: JSON.stringify({
+          employeeId: medicalData.employeeId,
+          type: medicalData.type,
+          startDate: medicalData.startDate,
+          daysAway: medicalData.days,
+          returnDate: medicalData.returnDate
+        })
+      });
+
+      setIsMedicalModalOpen(false);
+      fetchAttendance(currentPage);
     } catch (error) {
-      alert('Erro ao atualizar frequência em massa');
+      alert('Erro ao registrar atestado');
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleClearDates = () => {
-    const today = format(new Date(), 'yyyy-MM-dd');
-    setStartDate(today);
-    setEndDate(today);
   };
 
   const generatePDFDoc = () => {
@@ -689,15 +805,15 @@ export default function Frequency({ userRole }: FrequencyProps) {
       </div>
 
       {/* Attendance Table / Calendar */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+      <div className="table-container">
         {loading ? (
           <div className="p-12 text-center text-slate-400 font-medium">Carregando dados...</div>
         ) : filterMode === 'month' && monthlyViewMode === 'grid' ? (
-          <div className="overflow-x-auto">
+          <div className="table-scroll">
             <table className="w-full text-left border-collapse text-[10px]">
-              <thead>
+              <thead className="sticky-header">
                 <tr className="bg-slate-50 border-b border-slate-100">
-                  <th className="px-3 py-3 font-bold text-slate-500 uppercase sticky left-0 bg-slate-50 z-10 border-r border-slate-100 min-w-[150px]">Funcionário</th>
+                  <th className="px-3 py-3 font-bold text-slate-500 uppercase sticky left-0 bg-slate-50 z-20 border-r border-slate-100 min-w-[150px]">Funcionário</th>
                   <th className="px-3 py-3 font-bold text-slate-500 uppercase min-w-[120px]">Função</th>
                   {(() => {
                     const monthStart = startOfMonth(parseISO(startDate));
@@ -897,9 +1013,9 @@ export default function Frequency({ userRole }: FrequencyProps) {
             </div>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="table-scroll">
             <table className="w-full text-left border-collapse min-w-[800px] md:min-w-0">
-              <thead>
+              <thead className="sticky-header">
                 <tr className="bg-slate-50/50 border-b border-slate-100">
                   {isRangeView && <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Data</th>}
                   <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Funcionário</th>
@@ -997,6 +1113,104 @@ export default function Frequency({ userRole }: FrequencyProps) {
           </div>
         )}
       </div>
+
+      {!isRangeView && (
+        <Pagination 
+          currentPage={currentPage}
+          totalItems={totalItems}
+          itemsPerPage={itemsPerPage}
+          onPageChange={setCurrentPage}
+        />
+      )}
+      {/* Medical Certificate Modal */}
+      {isMedicalModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="text-xl font-bold text-slate-900">Registrar Afastamento</h3>
+              <button onClick={() => setIsMedicalModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            <form onSubmit={handleMedicalSubmit} className="p-6 space-y-4">
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-100 mb-4">
+                <p className="text-sm text-amber-800 font-medium">Funcionário: <span className="font-bold">{medicalData.employeeName}</span></p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-700">Tipo de Documento</label>
+                <select 
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                  value={medicalData.type}
+                  onChange={e => setMedicalData({...medicalData, type: e.target.value})}
+                >
+                  <option value="Atestado Médico">Atestado Médico</option>
+                  <option value="Documento de Comparecimento">Documento de Comparecimento</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-slate-700">Data de Início</label>
+                  <input 
+                    type="date"
+                    required
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                    value={medicalData.startDate}
+                    onChange={e => setMedicalData({...medicalData, startDate: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-slate-700">Dias</label>
+                  <input 
+                    type="number"
+                    min="1"
+                    required
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                    value={medicalData.days}
+                    onChange={e => setMedicalData({...medicalData, days: parseInt(e.target.value) || 1})}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-700">Data de Retorno (Automático)</label>
+                <input 
+                  type="date"
+                  readOnly
+                  className="w-full px-4 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-slate-500 cursor-not-allowed outline-none"
+                  value={medicalData.returnDate}
+                />
+              </div>
+
+              <div className="pt-4 flex gap-3">
+                <button 
+                  type="button"
+                  onClick={() => setIsMedicalModalOpen(false)}
+                  className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 px-6 py-3 bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+                >
+                  {loading ? 'Salvando...' : 'Confirmar'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <ConfirmationModal 
+        isOpen={isConfirmOpen}
+        onClose={() => setIsConfirmOpen(false)}
+        onConfirm={confirmConfig.onConfirm}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+      />
     </div>
   );
 }

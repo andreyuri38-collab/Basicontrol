@@ -26,13 +26,30 @@ import {
   Pie
 } from 'recharts';
 import { format } from 'date-fns';
+import { Pagination } from './Pagination';
+import { ConfirmationModal } from './ConfirmationModal';
 
 export default function Payroll({ userRole }: { userRole?: string }) {
   const [employees, setEmployees] = useState<any[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
   const [payrollData, setPayrollData] = useState<any[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  // Confirmation Modal State
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
   const [isEditing, setIsEditing] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [daysWorked, setDaysWorked] = useState<number | null>(null);
@@ -47,22 +64,25 @@ export default function Payroll({ userRole }: { userRole?: string }) {
 
   useEffect(() => {
     fetchEmployees();
-    fetchPayroll();
+    fetchPayroll(currentPage);
     fetchRoles();
-  }, [selectedMonth]);
+  }, [selectedMonth, currentPage]);
 
   const fetchRoles = () => {
-    fetch('/api/job-roles').then(res => res.json()).then(setRoles);
+    fetch('/api/job-roles?limit=1000').then(res => res.json()).then(res => setRoles(res.data || []));
   };
 
   const fetchEmployees = () => {
-    fetch('/api/employees').then(res => res.json()).then(setEmployees);
+    fetch('/api/employees?limit=1000').then(res => res.json()).then(res => setEmployees(res.data || []));
   };
 
-  const fetchPayroll = () => {
-    fetch(`/api/payroll?month=${selectedMonth}`)
+  const fetchPayroll = (page: number) => {
+    fetch(`/api/payroll?month=${selectedMonth}&page=${page}&limit=${itemsPerPage}`)
       .then(res => res.json())
-      .then(setPayrollData);
+      .then(res => {
+        setPayrollData(res.data);
+        setTotalItems(res.total);
+      });
   };
 
   const handleEmployeeChange = async (employeeId: string) => {
@@ -128,7 +148,7 @@ export default function Payroll({ userRole }: { userRole?: string }) {
       setIsModalOpen(false);
       setIsEditing(false);
       setEditingId(null);
-      fetchPayroll();
+      fetchPayroll(currentPage);
       setFormData({ ...formData, amount: '', description: '' });
     });
   };
@@ -147,16 +167,25 @@ export default function Payroll({ userRole }: { userRole?: string }) {
     setIsModalOpen(true);
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Deseja realmente excluir este lançamento?')) return;
-    
-    const res = await fetch(`/api/payroll/${id}`, {
-      method: 'DELETE',
-      headers: { 'x-user-role': userRole || '' }
+  const handleDelete = (id: number) => {
+    setConfirmConfig({
+      title: 'Excluir Lançamento?',
+      message: 'Deseja realmente excluir este lançamento? Esta ação não pode ser desfeita.',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/payroll/${id}`, {
+            method: 'DELETE',
+            headers: { 'x-user-role': userRole || '' }
+          });
+          if (res.ok) {
+            fetchPayroll(currentPage);
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }
     });
-    if (res.ok) {
-      fetchPayroll();
-    }
+    setIsConfirmOpen(true);
   };
 
   const totalBruto = payrollData.reduce((acc, curr) => acc + (curr.type !== 'Descontos' ? curr.amount : 0), 0);
@@ -235,9 +264,9 @@ export default function Payroll({ userRole }: { userRole?: string }) {
                 <span className="px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-[10px] font-bold uppercase whitespace-nowrap">2ª Quin.</span>
               </div>
             </div>
-            <div className="overflow-x-auto">
+            <div className="table-scroll">
               <table className="w-full text-left border-collapse min-w-[600px] md:min-w-0">
-                <thead>
+                <thead className="sticky-header">
                   <tr className="bg-slate-50/50 border-b border-slate-100">
                     <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Funcionário</th>
                     <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Tipo</th>
@@ -276,6 +305,12 @@ export default function Payroll({ userRole }: { userRole?: string }) {
                 </tbody>
               </table>
             </div>
+            <Pagination 
+              currentPage={currentPage}
+              totalItems={totalItems}
+              itemsPerPage={itemsPerPage}
+              onPageChange={setCurrentPage}
+            />
           </div>
         </div>
 
@@ -436,6 +471,14 @@ export default function Payroll({ userRole }: { userRole?: string }) {
           </div>
         </div>
       )}
+
+      <ConfirmationModal 
+        isOpen={isConfirmOpen}
+        onClose={() => setIsConfirmOpen(false)}
+        onConfirm={confirmConfig.onConfirm}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+      />
     </div>
   );
 }

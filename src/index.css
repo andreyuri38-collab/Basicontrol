@@ -6,21 +6,35 @@
 
 @layer base {
   html, body {
-    @apply h-full overflow-x-hidden;
+    @apply h-full overflow-x-auto;
   }
 
   /* Custom Scrollbar for better visibility */
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
   }
 
   ::-webkit-scrollbar-track {
-    @apply bg-slate-100;
+    @apply bg-transparent;
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-slate-300 rounded-full hover:bg-slate-400 transition-colors;
+    @apply bg-slate-200 rounded-full hover:bg-slate-300 transition-colors;
+  }
+
+  /* Table container with fixed height and scrolling */
+  .table-container {
+    @apply bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex flex-col w-full min-h-[300px];
+  }
+
+  .table-scroll {
+    @apply overflow-auto flex-1 min-h-[200px];
+    scrollbar-gutter: stable;
+  }
+
+  .sticky-header {
+    @apply sticky top-0 z-10 bg-white/80 backdrop-blur-md border-b border-slate-100;
   }
 
   .scrollbar-none {

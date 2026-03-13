@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, 
   Search, 
@@ -17,12 +17,28 @@ import {
   XCircle,
   Camera as CameraIcon,
   AlertTriangle,
-  Upload
+  Upload,
+  ArrowUpDown,
+  Stethoscope,
+  UserMinus,
+  RefreshCw,
+  Users
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import CameraCapture from './CameraCapture';
+import { Pagination } from './Pagination';
+import { ConfirmationModal } from './ConfirmationModal';
+import { 
+  useReactTable, 
+  getCoreRowModel, 
+  getSortedRowModel, 
+  SortingState, 
+  flexRender,
+  createColumnHelper
+} from '@tanstack/react-table';
+import { format } from 'date-fns';
 
 interface EmployeesProps {
   userRole?: string;
@@ -30,6 +46,9 @@ interface EmployeesProps {
 
 export default function Employees({ userRole }: EmployeesProps) {
   const [employees, setEmployees] = useState<any[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
   const [roles, setRoles] = useState<any[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
@@ -40,10 +59,17 @@ export default function Employees({ userRole }: EmployeesProps) {
   const [employeeToDelete, setEmployeeToDelete] = useState<any>(null);
   const [selectedEmployee, setSelectedEmployee] = useState<any>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [isTerminateModalOpen, setIsTerminateModalOpen] = useState(false);
+  const [isMedicalModalOpen, setIsMedicalModalOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [sorting, setSorting] = useState<SortingState>([]);
   const [employeeAttendance, setEmployeeAttendance] = useState<any[]>([]);
   const [employeePayroll, setEmployeePayroll] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [registrationFilter, setRegistrationFilter] = useState<'all' | 'registered' | 'unregistered'>('all');
+  const [roleFilter, setRoleFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [showFilters, setShowFilters] = useState(false);
   const [formData, setFormData] = useState({
     code: '',
     name: '',
@@ -64,21 +90,76 @@ export default function Employees({ userRole }: EmployeesProps) {
     resignation_date: ''
   });
 
+  const [terminationData, setTerminationData] = useState({
+    date: format(new Date(), 'yyyy-MM-dd'),
+    reason: ''
+  });
+
+  const [medicalData, setMedicalData] = useState({
+    startDate: format(new Date(), 'yyyy-MM-dd'),
+    days: 1,
+    description: ''
+  });
+
   useEffect(() => {
-    fetchEmployees();
+    fetchEmployees(currentPage);
     fetchRoles();
-  }, []);
+  }, [currentPage, searchTerm, registrationFilter, roleFilter, statusFilter, sorting]);
+
+  const fetchNextCode = async () => {
+    try {
+      const res = await fetch('/api/v2/employees/next-code');
+      const data = await res.json();
+      if (data.nextCode) {
+        setFormData(prev => ({ ...prev, code: data.nextCode }));
+      }
+    } catch (err) {
+      console.error('Error fetching next code:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (isModalOpen && !isEditing) {
+      fetchNextCode();
+    }
+  }, [isModalOpen, isEditing]);
 
   const fetchRoles = () => {
     fetch('/api/job-roles')
       .then(res => res.json())
-      .then(setRoles);
+      .then(data => setRoles(Array.isArray(data) ? data : data.data || []));
   };
 
-  const fetchEmployees = () => {
-    fetch('/api/employees')
+  const fetchEmployees = (page: number) => {
+    const sortBy = sorting.length > 0 ? sorting[0].id : undefined;
+    const sortOrder = sorting.length > 0 ? (sorting[0].desc ? 'desc' : 'asc') : undefined;
+
+    const params = new URLSearchParams({
+      page: page.toString(),
+      limit: itemsPerPage.toString(),
+      search: searchTerm,
+      registration: registrationFilter,
+      role: roleFilter,
+      status: statusFilter
+    });
+
+    if (sortBy) params.append('sortBy', sortBy);
+    if (sortOrder) params.append('sortOrder', sortOrder);
+
+    setLoading(true);
+    fetch(`/api/v2/employees?${params.toString()}`)
       .then(res => res.json())
-      .then(setEmployees);
+      .then(res => {
+        setEmployees(res.data || []);
+        setTotalItems(res.total || 0);
+      })
+      .catch(err => {
+        console.error('Error fetching employees:', err);
+        setEmployees([]);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   };
 
   const handleViewDetails = (employee: any) => {
@@ -88,12 +169,12 @@ export default function Employees({ userRole }: EmployeesProps) {
     // Fetch attendance history
     fetch(`/api/frequency?employee_id=${employee.id}`)
       .then(res => res.json())
-      .then(setEmployeeAttendance);
+      .then(res => setEmployeeAttendance(res.data || []));
       
     // Fetch payroll history
     fetch(`/api/payroll?employee_id=${employee.id}`)
       .then(res => res.json())
-      .then(setEmployeePayroll);
+      .then(res => setEmployeePayroll(res.data || []));
   };
 
   const handleEdit = (employee: any) => {
@@ -132,13 +213,14 @@ export default function Employees({ userRole }: EmployeesProps) {
     fetch(`/api/employees/${employeeToDelete.id}`, {
       method: 'DELETE',
       headers: { 'x-user-role': userRole || '' }
-    }).then(res => {
+    }).then(async (res) => {
       if (res.ok) {
-        fetchEmployees();
+        fetchEmployees(currentPage);
         setIsDeleteModalOpen(false);
         setEmployeeToDelete(null);
       } else {
-        alert('Erro ao excluir funcionário');
+        const err = await res.json();
+        alert(err.error || 'Erro ao excluir funcionário');
       }
     });
   };
@@ -156,6 +238,65 @@ export default function Employees({ userRole }: EmployeesProps) {
         ...formData,
         role: roleName
       });
+    }
+  };
+
+  const handleTerminate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEmployee) return;
+
+    try {
+      const res = await fetch(`/api/v2/employees/${selectedEmployee.id}/terminate`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-user-role': userRole || ''
+        },
+        body: JSON.stringify(terminationData)
+      });
+
+      if (res.ok) {
+        setIsTerminateModalOpen(false);
+        setSelectedEmployee(null);
+        fetchEmployees(currentPage);
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Erro ao demitir funcionário');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Erro de conexão');
+    }
+  };
+
+  const handleMedicalCertificate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEmployee) return;
+
+    try {
+      const res = await fetch('/api/v2/attendance/medical-certificate', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-user-role': userRole || ''
+        },
+        body: JSON.stringify({
+          employeeId: selectedEmployee.id,
+          ...medicalData
+        })
+      });
+
+      if (res.ok) {
+        setIsMedicalModalOpen(false);
+        setSelectedEmployee(null);
+        alert('Atestado registrado com sucesso!');
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Erro ao registrar atestado');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Erro de conexão');
     }
   };
 
@@ -180,7 +321,7 @@ export default function Employees({ userRole }: EmployeesProps) {
       setIsModalOpen(false);
       setIsEditing(false);
       setSelectedEmployee(null);
-      fetchEmployees();
+      fetchEmployees(currentPage);
       setFormData({ 
         code: '', name: '', role: '', document: '', phone: '', is_registered: 1,
         base_salary: '', admission_date: '', 
@@ -256,47 +397,22 @@ export default function Employees({ userRole }: EmployeesProps) {
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws);
 
-        let successCount = 0;
-        let errorCount = 0;
+        const res = await fetch('/api/v2/employees/import', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-user-role': userRole || ''
+          },
+          body: JSON.stringify({ employees: data })
+        });
 
-        for (const row of data as any[]) {
-          const employeeData = {
-            code: row['Código']?.toString() || '',
-            name: row['Nome']?.toString() || '',
-            role: row['Função']?.toString() || '',
-            document: row['Documento']?.toString() || '',
-            phone: row['Telefone']?.toString() || '',
-            is_registered: row['Registrado']?.toString().toLowerCase() === 'sim' ? 1 : 0,
-            base_salary: parseFloat(row['Salário Base']?.toString() || '0'),
-            admission_date: row['Data Admissão']?.toString() || new Date().toISOString().split('T')[0],
-            bank_name: row['Banco']?.toString() || '',
-            bank_agency: row['Agência']?.toString() || '',
-            bank_operation: row['Operação']?.toString() || '',
-            bank_account: row['Conta']?.toString() || '',
-            bank_observations: row['Observações Bancárias']?.toString() || '',
-            status: 'Ativo'
-          };
-
-          if (!employeeData.name || !employeeData.role) {
-            errorCount++;
-            continue;
-          }
-
-          const res = await fetch('/api/employees', {
-            method: 'POST',
-            headers: { 
-              'Content-Type': 'application/json',
-              'x-user-role': userRole || ''
-            },
-            body: JSON.stringify(employeeData)
-          });
-
-          if (res.ok) successCount++;
-          else errorCount++;
+        const result = await res.json();
+        if (res.ok) {
+          alert(`Importação concluída!\nSucesso: ${result.count}`);
+          fetchEmployees(currentPage);
+        } else {
+          alert(result.error || 'Erro na importação');
         }
-
-        alert(`Importação concluída!\nSucesso: ${successCount}\nErros/Inválidos: ${errorCount}`);
-        fetchEmployees();
       } catch (err) {
         console.error(err);
         alert('Erro ao processar o arquivo Excel');
@@ -308,21 +424,161 @@ export default function Employees({ userRole }: EmployeesProps) {
     reader.readAsBinaryString(file);
   };
 
-  const filteredEmployees = employees.filter(e => {
-    const matchesSearch = e.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         e.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         (e.code && e.code.toLowerCase().includes(searchTerm.toLowerCase()));
-    
-    const matchesReg = registrationFilter === 'all' || 
-                      (registrationFilter === 'registered' && e.is_registered === 1) ||
-                      (registrationFilter === 'unregistered' && e.is_registered === 0);
-    
-    return matchesSearch && matchesReg;
+  const columnHelper = createColumnHelper<any>();
+
+  const columns = useMemo(() => [
+    columnHelper.accessor('code', {
+      header: 'Código',
+      cell: info => <span className="font-mono text-sm text-slate-500">{info.getValue() || '-'}</span>,
+    }),
+    columnHelper.accessor('name', {
+      header: 'Funcionário',
+      cell: info => {
+        const employee = info.row.original;
+        const isTerminated = employee.status === 'TERMINATED';
+        return (
+          <div className={`flex items-center gap-3 ${isTerminated ? 'text-red-600' : ''}`}>
+            {employee.photo ? (
+              <img 
+                src={employee.photo} 
+                alt={employee.name} 
+                className={`w-9 h-9 rounded-full object-cover border border-slate-200 ${isTerminated ? 'grayscale opacity-50' : ''}`}
+              />
+            ) : (
+              <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 ${isTerminated ? 'bg-red-50 text-red-400' : 'bg-slate-100 text-slate-600'}`}>
+                {employee.name.charAt(0)}
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className={`font-semibold truncate ${isTerminated ? 'line-through' : 'text-slate-900'}`}>{employee.name}</p>
+              <p className="text-[10px] text-slate-400 uppercase font-bold">{employee.document || 'Sem Documento'}</p>
+            </div>
+          </div>
+        );
+      },
+    }),
+    columnHelper.accessor('role', {
+      header: 'Função',
+      cell: info => (
+        <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-semibold whitespace-nowrap">
+          {info.getValue()}
+        </span>
+      ),
+    }),
+    columnHelper.accessor('is_registered', {
+      header: 'Registro',
+      cell: info => (
+        info.getValue() === 1 ? (
+          <span className="flex items-center gap-1.5 text-emerald-600 text-xs font-bold">
+            <CheckCircle2 size={14} />
+            Registrado
+          </span>
+        ) : (
+          <span className="flex items-center gap-1.5 text-amber-600 text-xs font-bold">
+            <XCircle size={14} />
+            Não Registrado
+          </span>
+        )
+      ),
+    }),
+    columnHelper.accessor('base_salary', {
+      header: 'Salário Base',
+      cell: info => <span className="font-medium text-slate-700 whitespace-nowrap">R$ {info.getValue().toLocaleString()}</span>,
+    }),
+    columnHelper.accessor('admission_date', {
+      header: 'Admissão',
+      cell: info => <span className="text-slate-500 text-sm whitespace-nowrap">{format(new Date(info.getValue()), 'dd/MM/yyyy')}</span>,
+    }),
+    columnHelper.accessor('status', {
+      header: 'Status',
+      cell: info => {
+        const status = info.getValue();
+        const isTerminated = status === 'TERMINATED';
+        return (
+          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${
+            status === 'Ativo' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+          }`}>
+            {status === 'Ativo' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+            {isTerminated ? 'Demitido' : status}
+          </span>
+        );
+      },
+    }),
+    columnHelper.display({
+      id: 'actions',
+      header: () => <div className="text-right">Ações</div>,
+      cell: info => {
+        const employee = info.row.original;
+        return (
+          <div className="flex items-center justify-end gap-2">
+            <button 
+              onClick={() => handleViewDetails(employee)}
+              className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+              title="Ver Detalhes"
+            >
+              <Eye size={18} />
+            </button>
+            {userRole === 'admin' && (
+              <>
+                <button 
+                  onClick={() => {
+                    setSelectedEmployee(employee);
+                    setIsMedicalModalOpen(true);
+                  }}
+                  className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                  title="Registrar Atestado"
+                >
+                  <Stethoscope size={18} />
+                </button>
+                {employee.status === 'Ativo' && (
+                  <button 
+                    onClick={() => {
+                      setSelectedEmployee(employee);
+                      setIsTerminateModalOpen(true);
+                    }}
+                    className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all"
+                    title="Demitir"
+                  >
+                    <UserMinus size={18} />
+                  </button>
+                )}
+                <button 
+                  onClick={() => handleEdit(employee)}
+                  className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                  title="Editar"
+                >
+                  <Pencil size={18} />
+                </button>
+                <button 
+                  onClick={() => handleDelete(employee)}
+                  className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                  title="Excluir"
+                >
+                  <Trash2 size={18} />
+                </button>
+              </>
+            )}
+          </div>
+        );
+      },
+    }),
+  ], [userRole]);
+
+  const table = useReactTable({
+    data: employees,
+    columns,
+    state: {
+      sorting,
+    },
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    manualSorting: true,
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="flex flex-col h-full space-y-6">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 shrink-0">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
           <input 
@@ -334,27 +590,18 @@ export default function Employees({ userRole }: EmployeesProps) {
           />
         </div>
         
-        <div className="flex items-center gap-3">
-          <div className="flex bg-white border border-slate-200 rounded-xl p-1 shrink-0">
-            <button 
-              onClick={() => setRegistrationFilter('all')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${registrationFilter === 'all' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
-            >
-              Todos
-            </button>
-            <button 
-              onClick={() => setRegistrationFilter('registered')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${registrationFilter === 'registered' ? 'bg-emerald-500 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
-            >
-              Registrados
-            </button>
-            <button 
-              onClick={() => setRegistrationFilter('unregistered')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${registrationFilter === 'unregistered' ? 'bg-amber-500 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
-            >
-              Não Registrados
-            </button>
-          </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button 
+            onClick={() => setShowFilters(!showFilters)}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border transition-all font-medium ${showFilters ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+          >
+            <Filter size={18} />
+            Filtros
+            {(roleFilter !== 'all' || statusFilter !== 'Ativo' || registrationFilter !== 'all') && (
+              <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>
+            )}
+          </button>
+
           <button 
             onClick={exportExcel}
             className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition-all font-medium"
@@ -401,112 +648,145 @@ export default function Employees({ userRole }: EmployeesProps) {
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[800px] md:min-w-0">
-            <thead>
-              <tr className="bg-slate-50/50 border-b border-slate-100">
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Código</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Funcionário</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Função</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Registro</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Salário Base</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Admissão</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Ações</th>
-              </tr>
+      {showFilters && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-wrap items-center gap-6 animate-in slide-in-from-top-2 duration-200">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Função</label>
+            <select 
+              className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value)}
+            >
+              <option value="all">Todas as Funções</option>
+              {roles.map(role => (
+                <option key={role.id} value={role.name}>{role.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Status</label>
+            <div className="flex bg-slate-100 rounded-lg p-1">
+              {['Ativo', 'Afastado', 'Desligado', 'Todos'].map((status) => (
+                <button
+                  key={status}
+                  onClick={() => setStatusFilter(status === 'Todos' ? 'all' : status)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
+                    (status === 'Todos' ? statusFilter === 'all' : statusFilter === status)
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {status}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Registro</label>
+            <div className="flex bg-slate-100 rounded-lg p-1">
+              {[
+                { id: 'all', label: 'Todos' },
+                { id: 'registered', label: 'Registrados' },
+                { id: 'unregistered', label: 'Não Registrados' }
+              ].map((reg) => (
+                <button
+                  key={reg.id}
+                  onClick={() => setRegistrationFilter(reg.id as any)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
+                    registrationFilter === reg.id
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {reg.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button 
+            onClick={() => {
+              setRoleFilter('all');
+              setStatusFilter('Ativo');
+              setRegistrationFilter('all');
+              setSearchTerm('');
+            }}
+            className="mt-auto mb-1 flex items-center gap-2 px-3 py-2 text-red-500 hover:bg-red-50 rounded-lg transition-all text-sm font-bold"
+          >
+            <XIcon size={16} />
+            Limpar Filtros
+          </button>
+        </div>
+      )}
+
+      <div className="table-container flex-1">
+        <div className="table-scroll">
+          <table className="w-full text-left border-collapse min-w-[1100px]">
+            <thead className="sticky-header">
+              {table.getHeaderGroups().map(headerGroup => (
+                <tr key={headerGroup.id}>
+                  {headerGroup.headers.map(header => (
+                    <th 
+                      key={header.id} 
+                      className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider cursor-pointer hover:bg-slate-100 transition-colors"
+                      onClick={header.column.getToggleSortingHandler()}
+                    >
+                      <div className="flex items-center gap-2">
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        {header.column.getCanSort() && (
+                          <ArrowUpDown size={14} className={header.column.getIsSorted() ? 'text-emerald-500' : 'text-slate-300'} />
+                        )}
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              ))}
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {filteredEmployees.map((employee) => (
-                <tr key={employee.id} className="hover:bg-slate-50/50 transition-colors group">
-                  <td className="px-6 py-4 font-mono text-sm text-slate-500">
-                    {employee.code || '-'}
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      {employee.photo ? (
-                        <img 
-                          src={employee.photo} 
-                          alt={employee.name} 
-                          className="w-9 h-9 rounded-full object-cover border border-slate-200"
-                        />
-                      ) : (
-                        <div className="w-9 h-9 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 font-bold text-sm shrink-0">
-                          {employee.name.charAt(0)}
-                        </div>
-                      )}
-                      <div className="min-w-0">
-                        <p className="font-semibold text-slate-900 truncate">{employee.name}</p>
-                        <p className="text-[10px] text-slate-400 uppercase font-bold">{employee.document || 'Sem Documento'}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-semibold whitespace-nowrap">
-                      {employee.role}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    {employee.is_registered === 1 ? (
-                      <span className="flex items-center gap-1.5 text-emerald-600 text-xs font-bold">
-                        <CheckCircle2 size={14} />
-                        Registrado
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1.5 text-amber-600 text-xs font-bold">
-                        <XCircle size={14} />
-                        Não Registrado
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 font-medium text-slate-700 whitespace-nowrap">
-                    R$ {employee.base_salary.toLocaleString()}
-                  </td>
-                  <td className="px-6 py-4 text-slate-500 text-sm whitespace-nowrap">
-                    {new Date(employee.admission_date).toLocaleDateString('pt-BR')}
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${
-                      employee.status === 'Ativo' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
-                    }`}>
-                      {employee.status === 'Ativo' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
-                      {employee.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <button 
-                        onClick={() => handleViewDetails(employee)}
-                        className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
-                        title="Ver Detalhes"
-                      >
-                        <Eye size={18} />
-                      </button>
-                      {userRole === 'admin' && (
-                        <>
-                          <button 
-                            onClick={() => handleEdit(employee)}
-                            className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                            title="Editar"
-                          >
-                            <Pencil size={18} />
-                          </button>
-                          <button 
-                            onClick={() => handleDelete(employee)}
-                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                            title="Excluir"
-                          >
-                            <Trash2 size={18} />
-                          </button>
-                        </>
-                      )}
+              {loading ? (
+                <tr>
+                  <td colSpan={columns.length} className="px-6 py-20 text-center">
+                    <div className="flex flex-col items-center gap-3 text-slate-400">
+                      <RefreshCw size={48} className="animate-spin opacity-20" />
+                      <p className="font-medium">Carregando funcionários...</p>
                     </div>
                   </td>
                 </tr>
-              ))}
+              ) : (
+                <>
+                  {table.getRowModel().rows.map(row => (
+                    <tr key={row.id} className="hover:bg-slate-50/50 transition-colors group">
+                      {row.getVisibleCells().map(cell => (
+                        <td key={cell.id} className="px-6 py-4">
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                  {employees.length === 0 && (
+                    <tr>
+                      <td colSpan={columns.length} className="px-6 py-20 text-center">
+                        <div className="flex flex-col items-center gap-3 text-slate-400">
+                          <Users size={48} className="opacity-20" />
+                          <p className="font-medium">Nenhum funcionário encontrado</p>
+                          <p className="text-xs">Tente ajustar seus filtros ou busca</p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              )}
             </tbody>
           </table>
         </div>
+        <Pagination 
+          currentPage={currentPage}
+          totalItems={totalItems}
+          itemsPerPage={itemsPerPage}
+          onPageChange={setCurrentPage}
+        />
       </div>
 
       {/* Modal */}
@@ -871,6 +1151,131 @@ export default function Employees({ userRole }: EmployeesProps) {
         </div>
       )}
 
+      {/* Terminate Modal */}
+      {isTerminateModalOpen && selectedEmployee && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="text-xl font-bold text-slate-900">Demitir Funcionário</h3>
+              <button onClick={() => setIsTerminateModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                <XIcon size={20} />
+              </button>
+            </div>
+            <form onSubmit={handleTerminate} className="p-6 space-y-4">
+              <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl flex gap-3">
+                <AlertTriangle className="text-amber-500 shrink-0" size={20} />
+                <p className="text-xs text-amber-700">
+                  Atenção: A demissão de <span className="font-bold">{selectedEmployee.name}</span> alterará seu status para "Demitido" e ele não aparecerá mais nas listas de frequência futuras ou dashboards ativos.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-700">Data de Demissão</label>
+                <input 
+                  required
+                  type="date" 
+                  className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                  value={terminationData.date}
+                  onChange={e => setTerminationData({...terminationData, date: e.target.value})}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-700">Motivo (Opcional)</label>
+                <textarea 
+                  className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none h-24"
+                  placeholder="Descreva o motivo da demissão..."
+                  value={terminationData.reason}
+                  onChange={e => setTerminationData({...terminationData, reason: e.target.value})}
+                ></textarea>
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button"
+                  onClick={() => setIsTerminateModalOpen(false)}
+                  className="flex-1 px-6 py-2.5 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 font-semibold"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 px-6 py-2.5 bg-amber-500 text-white rounded-xl hover:bg-amber-600 font-semibold shadow-lg shadow-amber-500/20"
+                >
+                  Confirmar Demissão
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Medical Certificate Modal */}
+      {isMedicalModalOpen && selectedEmployee && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="text-xl font-bold text-slate-900">Registrar Atestado</h3>
+              <button onClick={() => setIsMedicalModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                <XIcon size={20} />
+              </button>
+            </div>
+            <form onSubmit={handleMedicalCertificate} className="p-6 space-y-4">
+              <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex gap-3">
+                <Stethoscope className="text-blue-500 shrink-0" size={20} />
+                <p className="text-xs text-blue-700">
+                  Registrando atestado para <span className="font-bold">{selectedEmployee.name}</span>. O sistema preencherá automaticamente a frequência como "ATESTADO" para o período.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-slate-700">Data de Início</label>
+                  <input 
+                    required
+                    type="date" 
+                    className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                    value={medicalData.startDate}
+                    onChange={e => setMedicalData({...medicalData, startDate: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-slate-700">Dias de Afastamento</label>
+                  <input 
+                    required
+                    type="number" 
+                    min="1"
+                    className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                    value={medicalData.days}
+                    onChange={e => setMedicalData({...medicalData, days: parseInt(e.target.value)})}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-700">Descrição/CID (Opcional)</label>
+                <textarea 
+                  className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none h-24"
+                  placeholder="Informações adicionais do atestado..."
+                  value={medicalData.description}
+                  onChange={e => setMedicalData({...medicalData, description: e.target.value})}
+                ></textarea>
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button"
+                  onClick={() => setIsMedicalModalOpen(false)}
+                  className="px-6 py-2.5 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 font-semibold"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 px-6 py-2.5 bg-blue-500 text-white rounded-xl hover:bg-blue-600 font-semibold shadow-lg shadow-blue-500/20"
+                >
+                  Registrar Atestado
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {isCameraOpen && (
         <CameraCapture 
           onCapture={(photo) => {
@@ -881,40 +1286,17 @@ export default function Employees({ userRole }: EmployeesProps) {
         />
       )}
 
-      {/* Delete Confirmation Modal */}
-      {isDeleteModalOpen && employeeToDelete && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
-            <div className="p-8 text-center">
-              <div className="w-20 h-20 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
-                <AlertTriangle size={40} />
-              </div>
-              <h3 className="text-xl font-bold text-slate-900 mb-2">Excluir Funcionário?</h3>
-              <p className="text-slate-500 mb-8">
-                Você está prestes a excluir <span className="font-bold text-slate-900">{employeeToDelete.name}</span>. 
-                Esta ação não pode ser desfeita e removerá todos os registros associados.
-              </p>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button 
-                  onClick={() => {
-                    setIsDeleteModalOpen(false);
-                    setEmployeeToDelete(null);
-                  }}
-                  className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 rounded-2xl font-bold hover:bg-slate-50 transition-all"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  onClick={confirmDelete}
-                  className="flex-1 px-6 py-3 bg-red-500 text-white rounded-2xl font-bold hover:bg-red-600 transition-all shadow-lg shadow-red-500/25"
-                >
-                  Sim, Excluir
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Confirmation Modal */}
+      <ConfirmationModal 
+        isOpen={isDeleteModalOpen}
+        onClose={() => {
+          setIsDeleteModalOpen(false);
+          setEmployeeToDelete(null);
+        }}
+        onConfirm={confirmDelete}
+        title="Excluir Funcionário?"
+        message={employeeToDelete ? `Você está prestes a excluir ${employeeToDelete.name}. Esta ação não pode ser desfeita e removerá todos os registros associados.` : ''}
+      />
     </div>
   );
 }

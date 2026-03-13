@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, UserPlus, Trash2, UserCheck, UserX, User, Settings } from 'lucide-react';
 import PermissionManager from './PermissionManager';
+import { ConfirmationModal } from './ConfirmationModal';
 
 interface UserData {
   id: number;
@@ -13,6 +14,18 @@ interface UserData {
 export default function Permissions() {
   const [users, setUsers] = useState<UserData[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  // Confirmation Modal State
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
   const [loading, setLoading] = useState(true);
   const [formData, setFormData] = useState({
     username: '',
@@ -68,19 +81,25 @@ export default function Permissions() {
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Tem certeza que deseja excluir este usuário?')) return;
-    try {
-      const response = await fetch(`/api/users/${id}`, {
-        method: 'DELETE',
-        headers: { 'x-user-role': currentUser.role }
-      });
-      if (response.ok) {
-        fetchUsers();
+  const handleDelete = (id: number) => {
+    setConfirmConfig({
+      title: 'Excluir Usuário?',
+      message: 'Tem certeza que deseja excluir este usuário? Esta ação não pode ser desfeita.',
+      onConfirm: async () => {
+        try {
+          const response = await fetch(`/api/users/${id}`, {
+            method: 'DELETE',
+            headers: { 'x-user-role': currentUser.role }
+          });
+          if (response.ok) {
+            fetchUsers();
+          }
+        } catch (error) {
+          console.error('Erro ao excluir usuário');
+        }
       }
-    } catch (error) {
-      alert('Erro ao excluir usuário');
-    }
+    });
+    setIsConfirmOpen(true);
   };
 
   const toggleRole = async (user: UserData) => {
@@ -262,6 +281,14 @@ export default function Permissions() {
           </div>
         </div>
       )}
+
+      <ConfirmationModal 
+        isOpen={isConfirmOpen}
+        onClose={() => setIsConfirmOpen(false)}
+        onConfirm={confirmConfig.onConfirm}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+      />
     </div>
   );
 }

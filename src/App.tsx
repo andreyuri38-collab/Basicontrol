@@ -19,9 +19,13 @@ import {
   Briefcase,
   Map,
   Activity,
-  Package
+  Package,
+  Calendar,
+  DollarSign,
+  BookOpen,
+  BarChart,
+  Settings
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
 import Dashboard from './components/Dashboard';
 import Employees from './components/Employees';
 import Frequency from './components/Frequency';
@@ -34,8 +38,14 @@ import ConstructionParameters from './components/ConstructionParameters';
 import Activities from './components/Activities';
 import DailyTasks from './components/DailyTasks';
 import Inventory from './components/Inventory';
+import Planning from './components/Planning';
+import Financial from './components/Financial';
+import ConstructionDiary from './components/ConstructionDiary';
+import MaterialControl from './components/MaterialControl';
+import Analytics from './components/Analytics';
+import SystemSettings from './components/SystemSettings';
 
-type Module = 'dashboard' | 'employees' | 'frequency' | 'payroll' | 'signatures' | 'permissions' | 'roles' | 'parameters' | 'activities' | 'tasks' | 'inventory';
+type Module = 'dashboard' | 'employees' | 'frequency' | 'payroll' | 'signatures' | 'permissions' | 'roles' | 'parameters' | 'activities' | 'tasks' | 'inventory' | 'planning' | 'financial' | 'diary' | 'materials' | 'analytics' | 'system';
 
 export default function App() {
   const [user, setUser] = useState<any>(JSON.parse(localStorage.getItem('user') || 'null'));
@@ -83,6 +93,11 @@ export default function App() {
     { id: 'parameters', label: 'Parâmetros', icon: Map },
     { id: 'activities', label: 'Atividades', icon: Activity },
     { id: 'inventory', label: 'Estoque', icon: Package },
+    { id: 'materials', label: 'Materiais', icon: Package },
+    { id: 'analytics', label: 'Analytics', icon: BarChart },
+    { id: 'planning', label: 'Planejamento', icon: Calendar },
+    { id: 'financial', label: 'Financeiro', icon: DollarSign },
+    { id: 'diary', label: 'Diário de Obra', icon: BookOpen },
     { id: 'tasks', label: 'Tarefa', icon: CalendarCheck },
     { id: 'frequency', label: 'Frequência', icon: CalendarCheck },
     { id: 'payroll', label: 'Folha Salarial', icon: Banknote },
@@ -91,6 +106,7 @@ export default function App() {
 
   if (user?.role === 'admin') {
     menuItems.push({ id: 'permissions', label: 'Usuários', icon: ShieldCheck });
+    menuItems.push({ id: 'system', label: 'Sistema', icon: Settings });
   }
 
   if (!user) {
@@ -107,38 +123,24 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#f5f5f5] flex font-sans text-slate-900">
       {/* Sidebar Overlay for Mobile */}
-      <AnimatePresence>
-        {isSidebarOpen && window.innerWidth <= 1024 && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setIsSidebarOpen(false)}
-            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] lg:hidden"
-          />
-        )}
-      </AnimatePresence>
+      {isSidebarOpen && window.innerWidth <= 1024 && (
+        <div 
+          onClick={() => setIsSidebarOpen(false)}
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] lg:hidden"
+        />
+      )}
 
       {/* Sidebar */}
-      <motion.aside 
-        initial={false}
-        animate={{ 
-          width: isSidebarOpen ? 280 : (window.innerWidth <= 1024 ? 0 : 80),
-          x: isSidebarOpen || window.innerWidth > 1024 ? 0 : -280
-        }}
+      <aside 
         className={`bg-slate-900 text-white flex flex-col fixed lg:sticky top-0 h-screen z-[70] overflow-hidden transition-all duration-300 ease-in-out ${
-          !isSidebarOpen && window.innerWidth <= 1024 ? 'pointer-events-none' : ''
-        }`}
+          isSidebarOpen ? 'w-72' : (window.innerWidth <= 1024 ? 'w-0 -translate-x-full' : 'w-20')
+        } ${!isSidebarOpen && window.innerWidth <= 1024 ? 'pointer-events-none' : ''}`}
       >
         <div className="p-6 flex items-center justify-between">
           {(isSidebarOpen || window.innerWidth > 1024) && (
-            <motion.h1 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="text-xl font-bold tracking-tight text-emerald-400 whitespace-nowrap"
-            >
+            <h1 className="text-xl font-bold tracking-tight text-emerald-400 whitespace-nowrap">
               OBRA CONTROL
-            </motion.h1>
+            </h1>
           )}
           <button 
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -185,7 +187,7 @@ export default function App() {
             {(isSidebarOpen || window.innerWidth <= 1024) && <span className="font-medium">Sair</span>}
           </button>
         </div>
-      </motion.aside>
+      </aside>
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 w-full">
@@ -225,29 +227,25 @@ export default function App() {
         </header>
 
         {/* Module Container */}
-        <div className="p-3 md:p-8 w-full flex-1">
-          <div className="max-w-[1600px] mx-auto">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={activeModule}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.2 }}
-              >
-                {activeModule === 'dashboard' && <Dashboard />}
-                {activeModule === 'employees' && <Employees userRole={user.role} />}
-                {activeModule === 'roles' && <Roles userRole={user.role} />}
-                {activeModule === 'parameters' && <ConstructionParameters />}
-                {activeModule === 'activities' && <Activities />}
-                {activeModule === 'inventory' && <Inventory />}
-                {activeModule === 'tasks' && <DailyTasks />}
-                {activeModule === 'frequency' && <Frequency userRole={user.role} />}
-                {activeModule === 'payroll' && <Payroll userRole={user.role} />}
-                {activeModule === 'signatures' && <Signatures userRole={user.role} />}
-                {activeModule === 'permissions' && <Permissions />}
-              </motion.div>
-            </AnimatePresence>
+        <div className="p-3 md:p-8 w-full flex-1 overflow-hidden">
+          <div className="max-w-[1600px] mx-auto h-full flex flex-col">
+            {activeModule === 'dashboard' && <Dashboard />}
+            {activeModule === 'employees' && <Employees userRole={user.role} />}
+            {activeModule === 'roles' && <Roles userRole={user.role} />}
+            {activeModule === 'parameters' && <ConstructionParameters />}
+            {activeModule === 'activities' && <Activities />}
+            {activeModule === 'inventory' && <Inventory />}
+            {activeModule === 'planning' && <Planning />}
+            {activeModule === 'financial' && <Financial />}
+            {activeModule === 'diary' && <ConstructionDiary />}
+            {activeModule === 'materials' && <MaterialControl />}
+            {activeModule === 'analytics' && <Analytics />}
+            {activeModule === 'tasks' && <DailyTasks />}
+            {activeModule === 'frequency' && <Frequency userRole={user.role} />}
+            {activeModule === 'payroll' && <Payroll userRole={user.role} />}
+            {activeModule === 'signatures' && <Signatures userRole={user.role} />}
+            {activeModule === 'permissions' && <Permissions />}
+            {activeModule === 'system' && <SystemSettings />}
           </div>
         </div>
       </main>

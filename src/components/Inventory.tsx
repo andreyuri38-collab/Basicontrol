@@ -9,6 +9,8 @@ import {
   Filter,
   ArrowUpDown
 } from 'lucide-react';
+import { Pagination } from './Pagination';
+import { ConfirmationModal } from './ConfirmationModal';
 
 interface StockItem {
   id: number;
@@ -21,7 +23,22 @@ interface StockItem {
 
 export default function Inventory() {
   const [items, setItems] = useState<StockItem[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
   const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  // Confirmation Modal State
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formData, setFormData] = useState<Partial<StockItem>>({
     tipo_item: 'INSUMO'
@@ -29,12 +46,19 @@ export default function Inventory() {
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    fetchItems();
-  }, []);
+    fetchItems(currentPage);
+  }, [currentPage, searchTerm]);
 
-  const fetchItems = async () => {
-    const res = await fetch('/api/estoque');
-    setItems(await res.json());
+  const fetchItems = async (page: number) => {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      limit: itemsPerPage.toString(),
+      search: searchTerm
+    });
+    const res = await fetch(`/api/estoque?${params.toString()}`);
+    const data = await res.json();
+    setItems(data.data);
+    setTotalItems(data.total);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -55,22 +79,28 @@ export default function Inventory() {
       setIsModalOpen(false);
       setFormData({ tipo_item: 'INSUMO' });
       setEditingId(null);
-      fetchItems();
+      fetchItems(currentPage);
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Deseja realmente excluir este item do estoque?')) return;
-    const res = await fetch(`/api/estoque/${id}`, {
-      method: 'DELETE',
-      headers: { 'x-user-role': 'admin' }
+  const handleDelete = (id: number) => {
+    setConfirmConfig({
+      title: 'Excluir Item do Estoque?',
+      message: 'Tem certeza que deseja excluir este item do estoque? Esta ação não pode ser desfeita.',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/estoque/${id}`, {
+            method: 'DELETE',
+            headers: { 'x-user-role': 'admin' }
+          });
+          if (res.ok) fetchItems(currentPage);
+        } catch (err) {
+          console.error(err);
+        }
+      }
     });
-    if (res.ok) fetchItems();
+    setIsConfirmOpen(true);
   };
-
-  const filteredItems = items.filter(item => 
-    item.descricao.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   return (
     <div className="space-y-6">
@@ -101,13 +131,13 @@ export default function Inventory() {
             />
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-400 uppercase">Total: {filteredItems.length} itens</span>
+            <span className="text-xs font-bold text-slate-400 uppercase">Total: {totalItems} itens</span>
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="table-scroll">
           <table className="w-full text-left border-collapse">
-            <thead>
+            <thead className="sticky-header">
               <tr className="bg-slate-50/50 text-[11px] uppercase font-bold text-slate-500 tracking-wider">
                 <th className="px-6 py-4">Item / Descrição</th>
                 <th className="px-6 py-4">Tipo</th>
@@ -118,7 +148,7 @@ export default function Inventory() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredItems.map(item => {
+              {items.map(item => {
                 const isLow = item.quantidade_atual < item.quantidade_minima;
                 return (
                   <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
@@ -176,7 +206,7 @@ export default function Inventory() {
                   </tr>
                 );
               })}
-              {filteredItems.length === 0 && (
+              {items.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-slate-400 italic">
                     Nenhum item encontrado no estoque
@@ -186,6 +216,12 @@ export default function Inventory() {
             </tbody>
           </table>
         </div>
+        <Pagination 
+          currentPage={currentPage}
+          totalItems={totalItems}
+          itemsPerPage={itemsPerPage}
+          onPageChange={setCurrentPage}
+        />
       </div>
 
       {/* Modal */}
@@ -279,6 +315,14 @@ export default function Inventory() {
           </div>
         </div>
       )}
+
+      <ConfirmationModal 
+        isOpen={isConfirmOpen}
+        onClose={() => setIsConfirmOpen(false)}
+        onConfirm={confirmConfig.onConfirm}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+      />
     </div>
   );
 }
