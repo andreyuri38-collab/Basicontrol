@@ -47,7 +47,7 @@ export default function Permissions() {
       });
       if (response.ok) {
         const data = await response.json();
-        setUsers(data);
+        setUsers(Array.isArray(data) ? data : data.data || []);
       }
     } catch (error) {
       console.error('Error fetching users:', error);

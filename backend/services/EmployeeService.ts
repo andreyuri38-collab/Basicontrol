@@ -3,33 +3,15 @@ import { startOfMonth, endOfMonth, isWithinInterval, parseISO, addMonths } from 
 
 export class EmployeeService {
   static async getAll(query: any) {
-    const { sortBy, sortOrder, status, page = 1, limit = 20, search, registration, role } = query;
+    const { sortBy, sortOrder, page = 1, limit = 20, search } = query;
     
     const where: any = {};
-    if (status && status !== 'all') {
-      if (status === 'Desligado') {
-        where.status = 'TERMINATED';
-      } else {
-        where.status = status;
-      }
-    }
-
-    if (role && role !== 'all') {
-      where.role = role;
-    }
-
     if (search) {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
         { role: { contains: search, mode: 'insensitive' } },
         { code: { contains: search, mode: 'insensitive' } }
       ];
-    }
-
-    if (registration === 'registered') {
-      where.isRegistered = 1;
-    } else if (registration === 'unregistered') {
-      where.isRegistered = 0;
     }
 
     const skip = (Number(page) - 1) * Number(limit);
@@ -45,17 +27,8 @@ export class EmployeeService {
       prisma.employee.count({ where })
     ]);
 
-    // Move terminated to end of list if not specifically sorted
-    let result = employees;
-    if (!sortBy) {
-      result = [
-        ...employees.filter(e => e.status !== 'TERMINATED'),
-        ...employees.filter(e => e.status === 'TERMINATED')
-      ];
-    }
-
     return {
-      data: result,
+      data: employees,
       total,
       page: Number(page),
       limit: Number(limit)

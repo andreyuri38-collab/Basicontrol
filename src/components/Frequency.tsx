@@ -84,7 +84,7 @@ export default function Frequency({ userRole }: FrequencyProps) {
   }, [selectedDate, startDate, endDate, filterMode, selectedEmployeeId, selectedRole, currentPage]);
 
   const fetchEmployees = () => {
-    fetch('/api/v2/employees?status=Ativo&limit=1000') // Fetch only active for selection
+    fetch('/api/employees?status=Ativo&limit=1000') // Fetch only active for selection
       .then(res => res.json())
       .then(res => setEmployees(res.data || []));
   };
@@ -310,7 +310,7 @@ export default function Frequency({ userRole }: FrequencyProps) {
       ));
 
       // Also save to medical_certificates table if it exists (Prisma schema has it)
-      await fetch('/api/v2/attendance/medical-certificate', {
+      await fetch('/api/attendance/medical-certificate', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

@@ -13,12 +13,12 @@ import {
   Menu, 
   X,
   ChevronRight,
+  ChevronDown,
   Bell,
   LogOut,
   ShieldCheck,
   Briefcase,
   Map,
-  Activity,
   Package,
   Calendar,
   DollarSign,
@@ -35,7 +35,7 @@ import Permissions from './components/Permissions';
 import Roles from './components/Roles';
 import Login from './components/Login';
 import ConstructionParameters from './components/ConstructionParameters';
-import Activities from './components/Activities';
+import ServiceParameters from './components/ServiceParameters';
 import DailyTasks from './components/DailyTasks';
 import Inventory from './components/Inventory';
 import Planning from './components/Planning';
@@ -45,12 +45,13 @@ import MaterialControl from './components/MaterialControl';
 import Analytics from './components/Analytics';
 import SystemSettings from './components/SystemSettings';
 
-type Module = 'dashboard' | 'employees' | 'frequency' | 'payroll' | 'signatures' | 'permissions' | 'roles' | 'parameters' | 'activities' | 'tasks' | 'inventory' | 'planning' | 'financial' | 'diary' | 'materials' | 'analytics' | 'system';
+type Module = 'dashboard' | 'employees' | 'frequency' | 'payroll' | 'signatures' | 'permissions' | 'roles' | 'parameters' | 'service-parameters' | 'tasks' | 'inventory' | 'planning' | 'financial' | 'diary' | 'materials' | 'analytics' | 'system';
 
 export default function App() {
   const [user, setUser] = useState<any>(JSON.parse(localStorage.getItem('user') || 'null'));
   const [activeModule, setActiveModule] = useState<Module>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 1024);
+  const [expandedMenus, setExpandedMenus] = useState<string[]>(['dp', 'analises', 'parametros', 'almoxarifado', 'planejamento', 'diario', 'config']);
   const [notifications, setNotifications] = useState<string[]>([]);
 
   useEffect(() => {
@@ -87,26 +88,75 @@ export default function App() {
   };
 
   const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'employees', label: 'Funcionários', icon: Users },
-    { id: 'roles', label: 'Cargos', icon: Briefcase },
-    { id: 'parameters', label: 'Parâmetros', icon: Map },
-    { id: 'activities', label: 'Atividades', icon: Activity },
-    { id: 'inventory', label: 'Estoque', icon: Package },
-    { id: 'materials', label: 'Materiais', icon: Package },
-    { id: 'analytics', label: 'Analytics', icon: BarChart },
-    { id: 'planning', label: 'Planejamento', icon: Calendar },
+    { 
+      id: 'analises', 
+      label: 'Análises', 
+      icon: BarChart,
+      subItems: [
+        { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+        { id: 'analytics', label: 'Analytics', icon: BarChart },
+      ]
+    },
+    { 
+      id: 'dp', 
+      label: 'Departamento Pessoal', 
+      icon: Users,
+      subItems: [
+        { id: 'employees', label: 'Funcionários', icon: Users },
+        { id: 'roles', label: 'Cargos', icon: Briefcase },
+        { id: 'frequency', label: 'Frequência', icon: CalendarCheck },
+        { id: 'payroll', label: 'Folha Salarial', icon: Banknote },
+        { id: 'signatures', label: 'Assinaturas', icon: PenTool },
+      ]
+    },
+    { 
+      id: 'parametros_group', 
+      label: 'Parâmetros', 
+      icon: Settings,
+      subItems: [
+        { id: 'parameters', label: 'Parâmetros de Projeto', icon: Map },
+        { id: 'service-parameters', label: 'Parâmetros de Serviço', icon: Settings },
+      ]
+    },
+    { 
+      id: 'almoxarifado', 
+      label: 'Almoxarifado', 
+      icon: Package,
+      subItems: [
+        { id: 'inventory', label: 'Estoque', icon: Package },
+        { id: 'materials', label: 'Materiais', icon: Package },
+      ]
+    },
+    { 
+      id: 'planejamento_group', 
+      label: 'Planejamento', 
+      icon: Calendar,
+      subItems: [
+        { id: 'planning', label: 'Planejamento', icon: Calendar },
+      ]
+    },
+    { 
+      id: 'diario_group', 
+      label: 'Diário', 
+      icon: BookOpen,
+      subItems: [
+        { id: 'diary', label: 'Diário de Obra', icon: BookOpen },
+        { id: 'tasks', label: 'Tarefa', icon: CalendarCheck },
+      ]
+    },
     { id: 'financial', label: 'Financeiro', icon: DollarSign },
-    { id: 'diary', label: 'Diário de Obra', icon: BookOpen },
-    { id: 'tasks', label: 'Tarefa', icon: CalendarCheck },
-    { id: 'frequency', label: 'Frequência', icon: CalendarCheck },
-    { id: 'payroll', label: 'Folha Salarial', icon: Banknote },
-    { id: 'signatures', label: 'Assinaturas', icon: PenTool },
   ];
 
   if (user?.role === 'admin') {
-    menuItems.push({ id: 'permissions', label: 'Usuários', icon: ShieldCheck });
-    menuItems.push({ id: 'system', label: 'Sistema', icon: Settings });
+    menuItems.push({ 
+      id: 'config', 
+      label: 'Configurações', 
+      icon: ShieldCheck,
+      subItems: [
+        { id: 'permissions', label: 'Usuários', icon: ShieldCheck },
+        { id: 'system', label: 'Sistema', icon: Settings },
+      ]
+    });
   }
 
   if (!user) {
@@ -118,6 +168,12 @@ export default function App() {
     if (window.innerWidth <= 1024) {
       setIsSidebarOpen(false);
     }
+  };
+
+  const toggleMenu = (id: string) => {
+    setExpandedMenus(prev => 
+      prev.includes(id) ? prev.filter(m => m !== id) : [...prev, id]
+    );
   };
 
   return (
@@ -158,23 +214,63 @@ export default function App() {
 
         <nav className="flex-1 px-4 py-4 space-y-2 overflow-y-auto min-h-0">
           {menuItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => handleModuleChange(item.id as Module)}
-              className={`w-full flex items-center gap-4 p-3 rounded-xl transition-all ${
-                activeModule === item.id 
-                  ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' 
-                  : 'hover:bg-slate-800 text-slate-400'
-              }`}
-            >
-              <item.icon size={22} className="shrink-0" />
-              {(isSidebarOpen || window.innerWidth <= 1024) && (
-                <span className="font-medium whitespace-nowrap">{item.label}</span>
+            <div key={item.id} className="space-y-1">
+              {item.subItems ? (
+                <>
+                  <button
+                    onClick={() => toggleMenu(item.id)}
+                    className={`w-full flex items-center gap-4 p-3 rounded-xl transition-all hover:bg-slate-800 text-slate-400`}
+                  >
+                    <item.icon size={22} className="shrink-0" />
+                    {(isSidebarOpen || window.innerWidth <= 1024) && (
+                      <>
+                        <span className="font-medium whitespace-nowrap">{item.label}</span>
+                        {expandedMenus.includes(item.id) ? (
+                          <ChevronDown size={16} className="ml-auto" />
+                        ) : (
+                          <ChevronRight size={16} className="ml-auto" />
+                        )}
+                      </>
+                    )}
+                  </button>
+                  {expandedMenus.includes(item.id) && (isSidebarOpen || window.innerWidth <= 1024) && (
+                    <div className="ml-4 pl-4 border-l border-slate-800 space-y-1">
+                      {item.subItems.map((subItem) => (
+                        <button
+                          key={subItem.id}
+                          onClick={() => handleModuleChange(subItem.id as Module)}
+                          className={`w-full flex items-center gap-3 p-2 rounded-lg transition-all ${
+                            activeModule === subItem.id 
+                              ? 'bg-emerald-500/10 text-emerald-400' 
+                              : 'hover:bg-slate-800 text-slate-500'
+                          }`}
+                        >
+                          <subItem.icon size={18} className="shrink-0" />
+                          <span className="text-sm font-medium whitespace-nowrap">{subItem.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <button
+                  onClick={() => handleModuleChange(item.id as Module)}
+                  className={`w-full flex items-center gap-4 p-3 rounded-xl transition-all ${
+                    activeModule === item.id 
+                      ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' 
+                      : 'hover:bg-slate-800 text-slate-400'
+                  }`}
+                >
+                  <item.icon size={22} className="shrink-0" />
+                  {(isSidebarOpen || window.innerWidth <= 1024) && (
+                    <span className="font-medium whitespace-nowrap">{item.label}</span>
+                  )}
+                  {(isSidebarOpen || window.innerWidth <= 1024) && activeModule === item.id && (
+                    <ChevronRight size={16} className="ml-auto" />
+                  )}
+                </button>
               )}
-              {(isSidebarOpen || window.innerWidth <= 1024) && activeModule === item.id && (
-                <ChevronRight size={16} className="ml-auto" />
-              )}
-            </button>
+            </div>
           ))}
         </nav>
 
@@ -201,7 +297,7 @@ export default function App() {
               <Menu size={24} />
             </button>
             <h2 className="text-xl md:text-2xl font-semibold capitalize truncate">
-              {menuItems.find(i => i.id === activeModule)?.label}
+              {menuItems.flatMap(i => i.subItems ? [i, ...i.subItems] : [i]).find(i => i.id === activeModule)?.label}
             </h2>
           </div>
           
@@ -233,7 +329,7 @@ export default function App() {
             {activeModule === 'employees' && <Employees userRole={user.role} />}
             {activeModule === 'roles' && <Roles userRole={user.role} />}
             {activeModule === 'parameters' && <ConstructionParameters />}
-            {activeModule === 'activities' && <Activities />}
+            {activeModule === 'service-parameters' && <ServiceParameters userRole={user.role} userEmail={user.username} />}
             {activeModule === 'inventory' && <Inventory />}
             {activeModule === 'planning' && <Planning />}
             {activeModule === 'financial' && <Financial />}

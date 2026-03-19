@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, 
   Search, 
-  Filter, 
   MoreVertical, 
   Download,
   FileText,
@@ -66,10 +65,6 @@ export default function Employees({ userRole }: EmployeesProps) {
   const [employeeAttendance, setEmployeeAttendance] = useState<any[]>([]);
   const [employeePayroll, setEmployeePayroll] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [registrationFilter, setRegistrationFilter] = useState<'all' | 'registered' | 'unregistered'>('all');
-  const [roleFilter, setRoleFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [showFilters, setShowFilters] = useState(false);
   const [formData, setFormData] = useState({
     code: '',
     name: '',
@@ -104,11 +99,11 @@ export default function Employees({ userRole }: EmployeesProps) {
   useEffect(() => {
     fetchEmployees(currentPage);
     fetchRoles();
-  }, [currentPage, searchTerm, registrationFilter, roleFilter, statusFilter, sorting]);
+  }, [currentPage, searchTerm, sorting]);
 
   const fetchNextCode = async () => {
     try {
-      const res = await fetch('/api/v2/employees/next-code');
+      const res = await fetch('/api/employees/next-code');
       const data = await res.json();
       if (data.nextCode) {
         setFormData(prev => ({ ...prev, code: data.nextCode }));
@@ -137,17 +132,14 @@ export default function Employees({ userRole }: EmployeesProps) {
     const params = new URLSearchParams({
       page: page.toString(),
       limit: itemsPerPage.toString(),
-      search: searchTerm,
-      registration: registrationFilter,
-      role: roleFilter,
-      status: statusFilter
+      search: searchTerm
     });
 
     if (sortBy) params.append('sortBy', sortBy);
     if (sortOrder) params.append('sortOrder', sortOrder);
 
     setLoading(true);
-    fetch(`/api/v2/employees?${params.toString()}`)
+    fetch(`/api/employees?${params.toString()}`)
       .then(res => res.json())
       .then(res => {
         setEmployees(res.data || []);
@@ -246,7 +238,7 @@ export default function Employees({ userRole }: EmployeesProps) {
     if (!selectedEmployee) return;
 
     try {
-      const res = await fetch(`/api/v2/employees/${selectedEmployee.id}/terminate`, {
+      const res = await fetch(`/api/employees/${selectedEmployee.id}/terminate`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -274,7 +266,7 @@ export default function Employees({ userRole }: EmployeesProps) {
     if (!selectedEmployee) return;
 
     try {
-      const res = await fetch('/api/v2/attendance/medical-certificate', {
+      const res = await fetch('/api/attendance/medical-certificate', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -397,7 +389,7 @@ export default function Employees({ userRole }: EmployeesProps) {
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws);
 
-        const res = await fetch('/api/v2/employees/import', {
+        const res = await fetch('/api/employees/import', {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
@@ -592,17 +584,6 @@ export default function Employees({ userRole }: EmployeesProps) {
         
         <div className="flex flex-wrap items-center gap-3">
           <button 
-            onClick={() => setShowFilters(!showFilters)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border transition-all font-medium ${showFilters ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-          >
-            <Filter size={18} />
-            Filtros
-            {(roleFilter !== 'all' || statusFilter !== 'Ativo' || registrationFilter !== 'all') && (
-              <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>
-            )}
-          </button>
-
-          <button 
             onClick={exportExcel}
             className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition-all font-medium"
           >
@@ -647,79 +628,6 @@ export default function Employees({ userRole }: EmployeesProps) {
           )}
         </div>
       </div>
-
-      {showFilters && (
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-wrap items-center gap-6 animate-in slide-in-from-top-2 duration-200">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Função</label>
-            <select 
-              className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-              value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
-            >
-              <option value="all">Todas as Funções</option>
-              {roles.map(role => (
-                <option key={role.id} value={role.name}>{role.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Status</label>
-            <div className="flex bg-slate-100 rounded-lg p-1">
-              {['Ativo', 'Afastado', 'Desligado', 'Todos'].map((status) => (
-                <button
-                  key={status}
-                  onClick={() => setStatusFilter(status === 'Todos' ? 'all' : status)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
-                    (status === 'Todos' ? statusFilter === 'all' : statusFilter === status)
-                      ? 'bg-white text-slate-900 shadow-sm'
-                      : 'text-slate-500 hover:text-slate-700'
-                  }`}
-                >
-                  {status}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Registro</label>
-            <div className="flex bg-slate-100 rounded-lg p-1">
-              {[
-                { id: 'all', label: 'Todos' },
-                { id: 'registered', label: 'Registrados' },
-                { id: 'unregistered', label: 'Não Registrados' }
-              ].map((reg) => (
-                <button
-                  key={reg.id}
-                  onClick={() => setRegistrationFilter(reg.id as any)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
-                    registrationFilter === reg.id
-                      ? 'bg-white text-slate-900 shadow-sm'
-                      : 'text-slate-500 hover:text-slate-700'
-                  }`}
-                >
-                  {reg.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <button 
-            onClick={() => {
-              setRoleFilter('all');
-              setStatusFilter('Ativo');
-              setRegistrationFilter('all');
-              setSearchTerm('');
-            }}
-            className="mt-auto mb-1 flex items-center gap-2 px-3 py-2 text-red-500 hover:bg-red-50 rounded-lg transition-all text-sm font-bold"
-          >
-            <XIcon size={16} />
-            Limpar Filtros
-          </button>
-        </div>
-      )}
 
       <div className="table-container flex-1">
         <div className="table-scroll">

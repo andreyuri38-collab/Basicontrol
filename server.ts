@@ -8,7 +8,7 @@ import bcrypt from "bcryptjs";
 import { google } from "googleapis";
 import fs from "fs";
 import { Readable } from "stream";
-import { parse, isValid, format } from "date-fns";
+import { parse, isValid, format, addDays } from "date-fns";
 import apiRoutes from './backend/routes';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -91,14 +91,15 @@ const db = {
     }
   },
   async query(sql: string, params: any[] = []) {
+    const sanitizedParams = params.map(p => (p === "null" || (typeof p === "number" && isNaN(p))) ? null : p);
     if (effectivePostgres) {
       // Convert ? to $1, $2, etc for Postgres
       let count = 0;
       const pgSql = sql.replace(/\?/g, () => `$${++count}`);
-      const result = await pgPool!.query(pgSql, params);
+      const result = await pgPool!.query(pgSql, sanitizedParams);
       return result.rows;
     } else {
-      return sqliteDb.prepare(sql).all(...params);
+      return sqliteDb.prepare(sql).all(...sanitizedParams);
     }
   },
   async queryOne(sql: string, params: any[] = []) {
@@ -106,13 +107,17 @@ const db = {
     return rows[0] || null;
   },
   async run(sql: string, params: any[] = []) {
+    const sanitizedParams = params.map(p => (p === "null" || (typeof p === "number" && isNaN(p))) ? null : p);
     if (effectivePostgres) {
       let count = 0;
-      const pgSql = sql.replace(/\?/g, () => `$${++count}`);
-      const result = await pgPool!.query(pgSql, params);
-      return { lastInsertRowid: (result as any).rows[0]?.id || null };
+      let pgSql = sql.replace(/\?/g, () => `$${++count}`);
+      if (pgSql.trim().toUpperCase().startsWith("INSERT") && !pgSql.toUpperCase().includes("RETURNING")) {
+        pgSql += " RETURNING id";
+      }
+      const result = await pgPool!.query(pgSql, sanitizedParams);
+      return { lastInsertRowid: result.rows[0]?.id || null };
     } else {
-      const info = sqliteDb.prepare(sql).run(...params);
+      const info = sqliteDb.prepare(sql).run(...sanitizedParams);
       return { lastInsertRowid: info.lastInsertRowid };
     }
   },
@@ -220,6 +225,15 @@ async function initDb() {
       id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
       nome_setor TEXT NOT NULL,
       descricao TEXT,
+      ordem INTEGER DEFAULT 0,
+      data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS tipos_ambiente (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      nome TEXT NOT NULL,
+      descricao TEXT,
+      icone TEXT,
       data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -227,7 +241,8 @@ async function initDb() {
       id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
       setor_id INTEGER REFERENCES setores(id),
       nome_pavimento TEXT NOT NULL,
-      descricao TEXT
+      descricao TEXT,
+      ordem INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS ambientes (
@@ -243,7 +258,18 @@ async function initDb() {
       esquadrias TEXT,
       metais TEXT,
       loucas TEXT,
-      descricao TEXT
+      descricao TEXT,
+      ordem INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS parametros_servico_itens (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      parametro_id INTEGER REFERENCES parametros_servico(id) ON DELETE CASCADE,
+      nome TEXT NOT NULL,
+      unidade_medida TEXT,
+      quantidade_produtividade REAL,
+      unidade_tempo TEXT, -- HORA, DIA
+      valor_parametro REAL
     );
 
     CREATE TABLE IF NOT EXISTS servicos_ambiente (
@@ -255,30 +281,54 @@ async function initDb() {
       quantidade_total_prevista REAL NOT NULL,
       quantidade_executada REAL DEFAULT 0,
       quantidade_restante REAL,
+      valor_parametro REAL,
+      produtividade REAL,
       descricao TEXT
     );
 
     -- Nucleo 3: Atividades
     CREATE TABLE IF NOT EXISTS grupos_atividade (
       id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      codigo TEXT,
       nome_grupo TEXT NOT NULL,
-      descricao TEXT
+      unidade_medida TEXT,
+      sequencia INTEGER DEFAULT 0,
+      descricao TEXT,
+      tempo_total REAL DEFAULT 0 -- Em dias
     );
 
     CREATE TABLE IF NOT EXISTS atividades (
       id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
       grupo_atividade_id INTEGER REFERENCES grupos_atividade(id),
+      nome_atividade TEXT NOT NULL,
+      unidade_medida TEXT,
+      sequencia INTEGER DEFAULT 0,
+      descricao TEXT,
       ambiente_id INTEGER REFERENCES ambientes(id),
       pavimento_id INTEGER REFERENCES pavimentos(id),
       setor_id INTEGER REFERENCES setores(id),
-      nome_atividade TEXT NOT NULL,
+      prazo_execucao INTEGER,
+      produtividade_profissional REAL,
+      valor_parametro REAL,
+      tipo_pagamento TEXT,
+      quantidade_padrao REAL DEFAULT 1,
+      status TEXT DEFAULT 'Ativo',
+      tem_dependencia INTEGER DEFAULT 0,
+      predecessora_id INTEGER REFERENCES atividades(id),
+      tempo_estimado REAL DEFAULT 0,
+      unidade_tempo_estimado TEXT DEFAULT 'DIA' -- DIA, HORA
+    );
+
+    CREATE TABLE IF NOT EXISTS servicos_definicao (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      atividade_id INTEGER REFERENCES atividades(id),
+      nome_servico TEXT NOT NULL,
       unidade_medida TEXT,
-      prazo_execucao INTEGER, -- em dias
-      produtividade_profissional REAL, -- qtd por dia por profissional
-      valor_parametro REAL, -- valor pago por unidade (para folha)
-      tipo_pagamento TEXT, -- PRODUÇÃO, GRATIFICAÇÃO, TAREFA
-      descricao TEXT,
-      quantidade_padrao REAL DEFAULT 1
+      quantidade_produtividade REAL,
+      tempo_produtividade REAL,
+      unidade_tempo TEXT, -- DIA, HORA
+      produtividade_media REAL,
+      descricao TEXT
     );
 
     CREATE TABLE IF NOT EXISTS composicao_atividade (
@@ -294,6 +344,54 @@ async function initDb() {
       id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
       atividade_id INTEGER REFERENCES atividades(id),
       atividade_pre_requisito_id INTEGER REFERENCES atividades(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS parametros_servico (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      codigo TEXT NOT NULL,
+      nome TEXT NOT NULL,
+      unidade_medida TEXT,
+      produtividade REAL,
+      produtividade_media REAL,
+      unidade_tempo TEXT DEFAULT 'DIA', -- DIA, HORA
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS grupos_servico (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      codigo TEXT,
+      nome TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS grupos_servico_atividades (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      grupo_id INTEGER REFERENCES grupos_servico(id) ON DELETE CASCADE,
+      atividade_id INTEGER REFERENCES parametros_servico(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS etapas_servico (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      codigo TEXT,
+      nome TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS etapas_servico_grupos (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      etapa_id INTEGER REFERENCES etapas_servico(id) ON DELETE CASCADE,
+      grupo_id INTEGER REFERENCES grupos_servico(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS historico_parametros (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      tipo_item TEXT, -- 'GRUPO', 'ETAPA', 'ATIVIDADE'
+      item_id INTEGER,
+      codigo TEXT,
+      nome TEXT,
+      descricao_alteracao TEXT,
+      usuario_email TEXT,
+      data_alteracao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     -- Nucleo 4: Execucao Diaria
@@ -325,9 +423,39 @@ async function initDb() {
       status TEXT DEFAULT 'Pendente',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS medical_certificates (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      employee_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      start_date TEXT NOT NULL,
+      days_away INTEGER NOT NULL,
+      return_date TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (employee_id) REFERENCES employees (id)
+    );
   `);
 
+  // Migration for existing tables
+  try {
+    await db.exec("ALTER TABLE setores ADD COLUMN ordem INTEGER DEFAULT 0");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE pavimentos ADD COLUMN ordem INTEGER DEFAULT 0");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE ambientes ADD COLUMN ordem INTEGER DEFAULT 0");
+  } catch (e) {}
+
   // Migrations
+  try { await db.exec("ALTER TABLE grupos_atividade ADD COLUMN codigo TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE grupos_atividade ADD COLUMN unidade_medida TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE grupos_atividade ADD COLUMN sequencia INTEGER DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN sequencia INTEGER DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN status TEXT DEFAULT 'Ativo';"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN quantidade_padrao REAL DEFAULT 1;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN descricao TEXT;"); } catch(e) {}
+
   try { await db.exec("ALTER TABLE employees ADD COLUMN code TEXT;"); } catch(e) {}
   try { await db.exec("ALTER TABLE employees ADD COLUMN document TEXT;"); } catch(e) {}
   try { await db.exec("ALTER TABLE employees ADD COLUMN phone TEXT;"); } catch(e) {}
@@ -342,7 +470,10 @@ async function initDb() {
   try { await db.exec("ALTER TABLE ambientes ADD COLUMN teto TEXT;"); } catch(e) {}
   try { await db.exec("ALTER TABLE ambientes ADD COLUMN esquadrias TEXT;"); } catch(e) {}
   try { await db.exec("ALTER TABLE ambientes ADD COLUMN metais TEXT;"); } catch(e) {}
-  try { await db.exec("ALTER TABLE ambientes ADD COLUMN loucas TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN icone TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE parametros_servico ADD COLUMN produtividade_media REAL;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE grupos_servico ADD COLUMN codigo TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE etapas_servico ADD COLUMN codigo TEXT;"); } catch(e) {}
 
   // Default Admin
   const admin = await db.queryOne("SELECT * FROM users WHERE username = 'Engenheiro1'");
@@ -535,9 +666,108 @@ app.use('/api/v2', apiRoutes);
   // Employees
   app.get("/api/employees", async (req, res) => {
     const { page, limit, offset } = getPagination(req);
-    const employees = await db.query("SELECT * FROM employees ORDER BY name LIMIT ? OFFSET ?", [limit, offset]);
-    const total = await db.queryOne("SELECT COUNT(*) as count FROM employees");
+    const { search, status } = req.query;
+    
+    let query = "SELECT * FROM employees WHERE 1=1";
+    let countQuery = "SELECT COUNT(*) as count FROM employees WHERE 1=1";
+    const params: any[] = [];
+
+    if (search && search !== '') {
+      query += " AND (name LIKE ? OR role LIKE ? OR code LIKE ?)";
+      countQuery += " AND (name LIKE ? OR role LIKE ? OR code LIKE ?)";
+      const searchParam = `%${search}%`;
+      params.push(searchParam, searchParam, searchParam);
+    }
+
+    if (status && status !== 'all' && status !== 'Todos') {
+      if (status === 'Desligado') {
+        query += " AND status = 'TERMINATED'";
+        countQuery += " AND status = 'TERMINATED'";
+      } else {
+        query += " AND status = ?";
+        countQuery += " AND status = ?";
+        params.push(status);
+      }
+    }
+
+    query += " ORDER BY name LIMIT ? OFFSET ?";
+    const queryParams = [...params, limit, offset];
+
+    const employees = await db.query(query, queryParams);
+    const total = await db.queryOne(countQuery, params);
     res.json({ data: employees, total: parseInt(total.count), page, limit });
+  });
+
+  app.get("/api/employees/next-code", async (req, res) => {
+    const employees = await db.query("SELECT code FROM employees");
+    const codes = employees
+      .map((e: any) => parseInt(e.code || '0'))
+      .filter((c: number) => !isNaN(c));
+    const maxCode = codes.length > 0 ? Math.max(...codes) : 0;
+    const nextCode = (maxCode + 1).toString().padStart(4, '0');
+    res.json({ nextCode });
+  });
+
+  app.post("/api/employees/import", requireAdmin, async (req, res) => {
+    const { employees } = req.body;
+    let count = 0;
+    for (const row of employees) {
+      const mappedData = {
+        code: row['Código'] || row['code'],
+        name: row['Nome'] || row['name'],
+        role: row['Função'] || row['role'],
+        document: row['Documento'] || row['document'],
+        phone: row['Telefone'] || row['phone'],
+        is_registered: (row['Registrado'] === 'Sim' || row['is_registered'] === 1) ? 1 : 0,
+        base_salary: parseFloat(row['Salário Base'] || row['base_salary'] || 0),
+        bank_name: row['Banco'] || row['bank_name'],
+        bank_agency: row['Agência'] || row['bank_agency'],
+        bank_operation: row['Operação'] || row['bank_operation'],
+        bank_account: row['Conta'] || row['bank_account'],
+        bank_observations: row['Observações Bancárias'] || row['bank_observations'],
+        admission_date: row['Data Admissão'] || row['admission_date'],
+        status: 'Ativo'
+      };
+
+      if (!mappedData.name) continue;
+
+      await db.run("INSERT INTO employees (code, name, role, document, phone, is_registered, base_salary, admission_date, bank_name, bank_agency, bank_operation, bank_account, bank_observations, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [mappedData.code, mappedData.name, mappedData.role, mappedData.document, mappedData.phone, mappedData.is_registered, mappedData.base_salary, mappedData.admission_date, mappedData.bank_name, mappedData.bank_agency, mappedData.bank_operation, mappedData.bank_account, mappedData.bank_observations, mappedData.status]);
+      count++;
+    }
+    res.json({ count });
+  });
+
+  app.post("/api/employees/:id/terminate", requireAdmin, async (req, res) => {
+    const { date } = req.body;
+    await db.run("UPDATE employees SET status = 'TERMINATED', resignation_date = ? WHERE id = ?", [date, req.params.id]);
+    res.json({ success: true });
+  });
+
+  app.post("/api/attendance/medical-certificate", requireAdmin, async (req, res) => {
+    const { employeeId, startDate, days, description } = req.body;
+    
+    // Calculate return date
+    const start = parse(startDate, 'yyyy-MM-dd', new Date());
+    const returnDateObj = addDays(start, parseInt(days));
+    const returnDate = format(returnDateObj, 'yyyy-MM-dd');
+
+    await db.run("INSERT INTO medical_certificates (employee_id, type, start_date, days_away, return_date) VALUES (?, ?, ?, ?, ?)",
+      [employeeId, 'Atestado Médico', startDate, days, returnDate]);
+    
+    // Also record in frequency
+    for (let i = 0; i < parseInt(days); i++) {
+      const currentDate = format(addDays(start, i), 'yyyy-MM-dd');
+      if (isPostgres) {
+        await db.run("INSERT INTO frequency (employee_id, date, status, atestato_days, observations) VALUES (?, ?, ?, ?, ?) ON CONFLICT (employee_id, date) DO UPDATE SET status = EXCLUDED.status, atestato_days = EXCLUDED.atestato_days, observations = EXCLUDED.observations", 
+          [employeeId, currentDate, 'Atestado', days, description]);
+      } else {
+        await db.run("INSERT INTO frequency (employee_id, date, status, atestato_days, observations) VALUES (?, ?, ?, ?, ?) ON CONFLICT(employee_id, date) DO UPDATE SET status=excluded.status, atestato_days=excluded.atestato_days, observations=excluded.observations",
+          [employeeId, currentDate, 'Atestado', days, description]);
+      }
+    }
+
+    res.json({ success: true });
   });
 
   app.post("/api/employees", requireAdmin, async (req, res) => {
@@ -908,9 +1138,21 @@ app.use('/api/v2', apiRoutes);
 
   app.get("/api/setores", async (req, res) => {
     const { page, limit, offset } = getPagination(req);
-    const data = await db.query("SELECT * FROM setores ORDER BY nome_setor LIMIT ? OFFSET ?", [limit, offset]);
+    const sortField = req.query.sortField as string || 'ordem';
+    const sortOrder = req.query.sortOrder as string || 'ASC';
+    
+    const validFields = ['nome_setor', 'ordem', 'data_criacao'];
+    const field = validFields.includes(sortField) ? sortField : 'ordem';
+    const order = sortOrder.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+
+    const data = await db.query(`SELECT * FROM setores ORDER BY ${field} ${order}, nome_setor ASC LIMIT ? OFFSET ?`, [limit, offset]);
     const total = await db.queryOne("SELECT COUNT(*) as count FROM setores");
     res.json({ data, total: parseInt(total.count), page, limit });
+  });
+  app.get("/api/setores/:id", async (req, res) => {
+    const data = await db.queryOne("SELECT * FROM setores WHERE id = ?", [req.params.id]);
+    if (data) res.json(data);
+    else res.status(404).json({ error: "Setor não encontrado" });
   });
   app.post("/api/setores", requireAdmin, async (req, res) => {
     const { nome_setor, descricao } = req.body;
@@ -931,19 +1173,50 @@ app.use('/api/v2', apiRoutes);
     }
   });
 
+  app.get("/api/tipos-ambiente", async (req, res) => {
+    const data = await db.query("SELECT * FROM tipos_ambiente ORDER BY nome");
+    res.json(data);
+  });
+
+  app.post("/api/tipos-ambiente", requireAdmin, async (req, res) => {
+    const { nome, descricao, icone } = req.body;
+    const info = await db.run("INSERT INTO tipos_ambiente (nome, descricao, icone) VALUES (?, ?, ?)", [nome, descricao, icone]);
+    res.json({ id: info.lastInsertRowid });
+  });
+
+  app.put("/api/tipos-ambiente/:id", requireAdmin, async (req, res) => {
+    const { nome, descricao, icone } = req.body;
+    await db.run("UPDATE tipos_ambiente SET nome = ?, descricao = ?, icone = ? WHERE id = ?", [nome, descricao, icone, req.params.id]);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/tipos-ambiente/:id", requireAdmin, async (req, res) => {
+    await db.run("DELETE FROM tipos_ambiente WHERE id = ?", [req.params.id]);
+    res.json({ success: true });
+  });
+
   app.get("/api/pavimentos", async (req, res) => {
-    const { setor_id } = req.query;
+    const { setor_id, sortField, sortOrder } = req.query;
     const { page, limit, offset } = getPagination(req);
+    
+    const field = (sortField === 'nome_pavimento' || sortField === 'ordem') ? sortField : 'ordem';
+    const order = sortOrder === 'DESC' ? 'DESC' : 'ASC';
+
     let sql = "SELECT * FROM pavimentos";
     const params: any[] = [];
     if (setor_id) { sql += " WHERE setor_id = ?"; params.push(setor_id); }
     
     const total = await db.queryOne(`SELECT COUNT(*) as count FROM (${sql}) as t`, params);
-    sql += " ORDER BY nome_pavimento LIMIT ? OFFSET ?";
+    sql += ` ORDER BY ${field} ${order}, nome_pavimento ASC LIMIT ? OFFSET ?`;
     params.push(limit, offset);
     
     const data = await db.query(sql, params);
     res.json({ data, total: parseInt(total.count), page, limit });
+  });
+  app.get("/api/pavimentos/:id", async (req, res) => {
+    const data = await db.queryOne("SELECT * FROM pavimentos WHERE id = ?", [req.params.id]);
+    if (data) res.json(data);
+    else res.status(404).json({ error: "Pavimento não encontrado" });
   });
   app.post("/api/pavimentos", requireAdmin, async (req, res) => {
     const { setor_id, nome_pavimento, descricao } = req.body;
@@ -965,30 +1238,85 @@ app.use('/api/v2', apiRoutes);
   });
 
   app.get("/api/ambientes", async (req, res) => {
-    const { pavimento_id, setor_id } = req.query;
+    const { pavimento_id, setor_id, sortField, sortOrder } = req.query;
     const { page, limit, offset } = getPagination(req);
+    
+    const field = (sortField === 'nome_ambiente' || sortField === 'ordem') ? `a.${sortField}` : 'a.ordem';
+    const order = sortOrder === 'DESC' ? 'DESC' : 'ASC';
+
     let sql = "SELECT a.*, s.nome_setor, p.nome_pavimento FROM ambientes a JOIN setores s ON a.setor_id = s.id JOIN pavimentos p ON a.pavimento_id = p.id WHERE 1=1";
     const params: any[] = [];
     if (pavimento_id) { sql += " AND a.pavimento_id = ?"; params.push(pavimento_id); }
     if (setor_id) { sql += " AND a.setor_id = ?"; params.push(setor_id); }
     
     const total = await db.queryOne(`SELECT COUNT(*) as count FROM (${sql}) as t`, params);
-    sql += " ORDER BY a.nome_ambiente LIMIT ? OFFSET ?";
+    sql += ` ORDER BY ${field} ${order}, a.nome_ambiente ASC LIMIT ? OFFSET ?`;
     params.push(limit, offset);
     
     const data = await db.query(sql, params);
     res.json({ data, total: parseInt(total.count), page, limit });
   });
+  app.get("/api/ambientes/:id", async (req, res) => {
+    const data = await db.queryOne("SELECT a.*, s.nome_setor, p.nome_pavimento FROM ambientes a JOIN setores s ON a.setor_id = s.id JOIN pavimentos p ON a.pavimento_id = p.id WHERE a.id = ?", [req.params.id]);
+    if (data) res.json(data);
+    else res.status(404).json({ error: "Ambiente não encontrado" });
+  });
   app.post("/api/ambientes", requireAdmin, async (req, res) => {
-    const { setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao } = req.body;
+    const { setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao, servicos_ids } = req.body;
     const info = await db.run("INSERT INTO ambientes (setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
       [setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao]);
-    res.json({ id: info.lastInsertRowid });
+    
+    const ambienteId = info.lastInsertRowid;
+
+    if (servicos_ids && Array.isArray(servicos_ids)) {
+      for (const srvId of servicos_ids) {
+        const srvDef = await db.queryOne("SELECT * FROM parametros_servico_itens WHERE id = ?", [srvId]);
+        if (srvDef) {
+          await db.run("INSERT INTO servicos_ambiente (ambiente_id, nome_servico, unidade_medida, quantidade_total_prevista, quantidade_restante, valor_parametro, produtividade) VALUES (?, ?, ?, ?, ?, ?, ?)", 
+            [ambienteId, srvDef.nome, srvDef.unidade_medida, area_total || 0, area_total || 0, srvDef.valor_parametro, srvDef.quantidade_produtividade]);
+        }
+      }
+    }
+
+    res.json({ id: ambienteId });
   });
   app.put("/api/ambientes/:id", requireAdmin, async (req, res) => {
-    const { setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao } = req.body;
+    const { setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao, servicos_ids } = req.body;
     await db.run("UPDATE ambientes SET setor_id = ?, pavimento_id = ?, nome_ambiente = ?, tipo_ambiente = ?, area_total = ?, piso = ?, parede = ?, teto = ?, esquadrias = ?, metais = ?, loucas = ?, descricao = ? WHERE id = ?", 
       [setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao, req.params.id]);
+    
+    if (servicos_ids && Array.isArray(servicos_ids)) {
+      // Get current services
+      const currentServices = await db.query("SELECT id, nome_servico, quantidade_executada FROM servicos_ambiente WHERE ambiente_id = ?", [req.params.id]);
+      
+      // Get new service definitions
+      const newServiceDefs = [];
+      for (const srvId of servicos_ids) {
+        const srvDef = await db.queryOne("SELECT * FROM parametros_servico_itens WHERE id = ?", [srvId]);
+        if (srvDef) newServiceDefs.push(srvDef);
+      }
+
+      const newServiceNames = newServiceDefs.map(s => s.nome);
+
+      // Remove services not in the new list (only if not executed)
+      for (const current of currentServices) {
+        if (!newServiceNames.includes(current.nome_servico)) {
+          if (current.quantidade_executada === 0) {
+            await db.run("DELETE FROM servicos_ambiente WHERE id = ?", [current.id]);
+          }
+        }
+      }
+
+      // Add new services
+      for (const srvDef of newServiceDefs) {
+        const exists = currentServices.find(s => s.nome_servico === srvDef.nome);
+        if (!exists) {
+          await db.run("INSERT INTO servicos_ambiente (ambiente_id, nome_servico, unidade_medida, quantidade_total_prevista, quantidade_restante, valor_parametro, produtividade) VALUES (?, ?, ?, ?, ?, ?, ?)", 
+            [req.params.id, srvDef.nome, srvDef.unidade_medida, area_total || 0, area_total || 0, srvDef.valor_parametro, srvDef.quantidade_produtividade]);
+        }
+      }
+    }
+
     res.json({ success: true });
   });
   app.delete("/api/ambientes/:id", requireAdmin, async (req, res) => {
@@ -997,6 +1325,80 @@ app.use('/api/v2', apiRoutes);
       res.json({ success: true });
     } catch (error: any) {
       res.status(400).json({ error: "Não é possível excluir este ambiente pois existem serviços vinculados a ele." });
+    }
+  });
+
+  app.post("/api/reorder/:type", requireAdmin, async (req, res) => {
+    const { type } = req.params;
+    const { orders } = req.body; // Array of { id, ordem }
+    
+    const tableMap: Record<string, string> = {
+      sector: 'setores',
+      floor: 'pavimentos',
+      env: 'ambientes'
+    };
+    
+    const table = tableMap[type];
+    if (!table) return res.status(400).json({ error: "Tipo inválido" });
+    
+    try {
+      for (const item of orders) {
+        await db.run(`UPDATE ${table} SET ordem = ? WHERE id = ?`, [item.ordem, item.id]);
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Erro ao reordenar" });
+    }
+  });
+
+  app.post("/api/construction/import", requireAdmin, async (req, res) => {
+    const { data } = req.body;
+    let count = 0;
+    
+    try {
+      for (const row of data) {
+        const sectorName = row['Setor'] || row['setor'];
+        const floorName = row['Pavimento'] || row['pavimento'];
+        const envName = row['Ambiente'] || row['ambiente'];
+        const envType = row['Tipo'] || row['tipo'] || 'SALA';
+        const areaPiso = parseFloat(row['Área Piso'] || row['area_piso'] || 0);
+        const areaTeto = row['Área Teto'] || row['area_teto'] || '';
+        const areaParede = row['Área Parede'] || row['Área Alvenaria'] || row['area_parede'] || '';
+        const descricao = row['Descrição'] || row['descricao'] || '';
+
+        if (!sectorName || !floorName || !envName) continue;
+
+        // 1. Find or create Sector
+        let sector = await db.queryOne("SELECT id FROM setores WHERE nome_setor = ?", [sectorName]);
+        let sectorId;
+        if (!sector) {
+          const info = await db.run("INSERT INTO setores (nome_setor) VALUES (?)", [sectorName]);
+          sectorId = info.lastInsertRowid;
+        } else {
+          sectorId = sector.id;
+        }
+
+        // 2. Find or create Floor
+        let floor = await db.queryOne("SELECT id FROM pavimentos WHERE setor_id = ? AND nome_pavimento = ?", [sectorId, floorName]);
+        let floorId;
+        if (!floor) {
+          const info = await db.run("INSERT INTO pavimentos (setor_id, nome_pavimento) VALUES (?, ?)", [sectorId, floorName]);
+          floorId = info.lastInsertRowid;
+        } else {
+          floorId = floor.id;
+        }
+
+        // 3. Create Environment
+        await db.run(
+          "INSERT INTO ambientes (setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, teto, parede, descricao) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          [sectorId, floorId, envName, envType, areaPiso, areaTeto, areaParede, descricao]
+        );
+        count++;
+      }
+      res.json({ count });
+    } catch (error: any) {
+      console.error("Erro na importação de parâmetros:", error);
+      res.status(500).json({ error: error.message });
     }
   });
 
@@ -1017,9 +1419,14 @@ app.use('/api/v2', apiRoutes);
 
     const composition = await db.query("SELECT * FROM composicao_atividade WHERE atividade_id = ?", [activity.id]);
     
-    const materials = composition.map((item: any) => ({
-      ...item,
-      quantidade_total: item.quantidade * service.quantidade_total_prevista
+    const materials = await Promise.all(composition.map(async (item: any) => {
+      const stock = await db.queryOne("SELECT quantidade_atual, quantidade_minima FROM estoque WHERE descricao = ?", [item.descricao]);
+      return {
+        ...item,
+        quantidade_total: item.quantidade * service.quantidade_total_prevista,
+        estoque_atual: stock ? stock.quantidade_atual : 0,
+        estoque_minimo: stock ? stock.quantidade_minima : 0
+      };
     }));
 
     res.json(materials);
@@ -1048,110 +1455,285 @@ app.use('/api/v2', apiRoutes);
     res.json({ success: true });
   });
 
-  // --- NUCLEO 3: ATIVIDADES ---
-  app.get("/api/grupos-atividade", async (req, res) => {
+  // --- NUCLEO 3: PARÂMETROS DE SERVIÇO ---
+  app.get("/api/parametros-servico", async (req, res) => {
     const { page, limit, offset } = getPagination(req);
-    const data = await db.query("SELECT * FROM grupos_atividade ORDER BY nome_grupo LIMIT ? OFFSET ?", [limit, offset]);
-    const total = await db.queryOne("SELECT COUNT(*) as count FROM grupos_atividade");
-    res.json({ data, total: parseInt(total.count), page, limit });
-  });
-  app.post("/api/grupos-atividade", requireAdmin, async (req, res) => {
-    const { nome_grupo, descricao } = req.body;
-    const info = await db.run("INSERT INTO grupos_atividade (nome_grupo, descricao) VALUES (?, ?)", [nome_grupo, descricao]);
-    res.json({ id: info.lastInsertRowid });
-  });
-  app.put("/api/grupos-atividade/:id", requireAdmin, async (req, res) => {
-    const { nome_grupo, descricao } = req.body;
-    await db.run("UPDATE grupos_atividade SET nome_grupo = ?, descricao = ? WHERE id = ?", [nome_grupo, descricao, req.params.id]);
-    res.json({ success: true });
-  });
-  app.delete("/api/grupos-atividade/:id", requireAdmin, async (req, res) => {
-    try {
-      await db.run("DELETE FROM grupos_atividade WHERE id = ?", [req.params.id]);
-      res.json({ success: true });
-    } catch (error: any) {
-      res.status(400).json({ error: "Não é possível excluir este grupo pois existem atividades vinculadas a ele." });
-    }
-  });
-
-  app.get("/api/atividades", async (req, res) => {
-    const { grupo_id, status, prazo_max, ambiente_id, pavimento_id, setor_id } = req.query;
-    const { page, limit, offset } = getPagination(req);
-    let sql = `
-      SELECT a.*, g.nome_grupo, amb.nome_ambiente, p.nome_pavimento, s.nome_setor 
-      FROM atividades a 
-      JOIN grupos_atividade g ON a.grupo_atividade_id = g.id 
-      LEFT JOIN ambientes amb ON a.ambiente_id = amb.id
-      LEFT JOIN pavimentos p ON a.pavimento_id = p.id
-      LEFT JOIN setores s ON a.setor_id = s.id
-      WHERE 1=1
+    const sql = `
+      SELECT * FROM parametros_servico 
+      ORDER BY codigo ASC 
+      LIMIT ? OFFSET ?
     `;
-    const params: any[] = [];
-    if (grupo_id) { sql += " AND a.grupo_atividade_id = ?"; params.push(grupo_id); }
-    if (status) { sql += " AND a.status = ?"; params.push(status); }
-    if (prazo_max) { sql += " AND a.prazo_execucao <= ?"; params.push(prazo_max); }
-    if (ambiente_id) { sql += " AND a.ambiente_id = ?"; params.push(ambiente_id); }
-    if (pavimento_id) { sql += " AND a.pavimento_id = ?"; params.push(pavimento_id); }
-    if (setor_id) { sql += " AND a.setor_id = ?"; params.push(setor_id); }
-    
-    const total = await db.queryOne(`SELECT COUNT(*) as count FROM (${sql}) as t`, params);
-    sql += " ORDER BY a.nome_atividade LIMIT ? OFFSET ?";
-    params.push(limit, offset);
-    
-    const data = await db.query(sql, params);
+    const data = await db.query(sql, [limit, offset]);
+    const total = await db.queryOne("SELECT COUNT(*) as count FROM parametros_servico");
     res.json({ data, total: parseInt(total.count), page, limit });
   });
 
-  app.post("/api/atividades", requireAdmin, async (req, res) => {
-    const { grupo_atividade_id, ambiente_id, pavimento_id, setor_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status, linkServiceIds } = req.body;
-    const info = await db.run("INSERT INTO atividades (grupo_atividade_id, ambiente_id, pavimento_id, setor_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-      [grupo_atividade_id, ambiente_id, pavimento_id, setor_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao || 1, status || 'Ativo']);
-    
-    // Link services if provided
-    if (linkServiceIds && Array.isArray(linkServiceIds) && ambiente_id) {
-      for (const serviceId of linkServiceIds) {
-        await db.run("UPDATE servicos_ambiente SET ambiente_id = ? WHERE id = ?", [ambiente_id, serviceId]);
-      }
-    }
-
-    res.json({ id: info.lastInsertRowid });
+  app.get("/api/parametros-servico/next-code", async (req, res) => {
+    const last = await db.queryOne("SELECT MAX(codigo) as lastCode FROM parametros_servico");
+    const nextCode = (last?.lastCode || 0) + 1;
+    res.json({ nextCode });
   });
 
-  app.put("/api/atividades/:id", requireAdmin, async (req, res) => {
-    const { grupo_atividade_id, ambiente_id, pavimento_id, setor_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status } = req.body;
-    await db.run("UPDATE atividades SET grupo_atividade_id = ?, ambiente_id = ?, pavimento_id = ?, setor_id = ?, nome_atividade = ?, unidade_medida = ?, prazo_execucao = ?, produtividade_profissional = ?, valor_parametro = ?, tipo_pagamento = ?, descricao = ?, quantidade_padrao = ?, status = ? WHERE id = ?", 
-      [grupo_atividade_id, ambiente_id, pavimento_id, setor_id, nome_atividade, unidade_medida, prazo_execucao, produtividade_profissional, valor_parametro, tipo_pagamento, descricao, quantidade_padrao, status, req.params.id]);
-    res.json({ success: true });
-  });
-  app.delete("/api/atividades/:id", requireAdmin, async (req, res) => {
+  app.post("/api/parametros-servico", requireAdmin, async (req, res) => {
+    const { codigo, nome, unidade_medida, produtividade, produtividade_media, unidade_tempo, grupo_id, etapa_id } = req.body;
     try {
-      await db.run("DELETE FROM atividades WHERE id = ?", [req.params.id]);
+      const info = await db.run(
+        "INSERT INTO parametros_servico (codigo, nome, unidade_medida, produtividade, produtividade_media, unidade_tempo) VALUES (?, ?, ?, ?, ?, ?)",
+        [codigo, nome, unidade_medida, produtividade, produtividade_media, unidade_tempo || 'DIA']
+      );
+      const atividadeId = info.lastInsertRowid;
+
+      if (grupo_id) {
+        await db.run("INSERT INTO grupos_servico_atividades (grupo_id, atividade_id) VALUES (?, ?)", [grupo_id, atividadeId]);
+        
+        if (etapa_id) {
+          const exists = await db.queryOne("SELECT id FROM etapas_servico_grupos WHERE etapa_id = ? AND grupo_id = ?", [etapa_id, grupo_id]);
+          if (!exists) {
+            await db.run("INSERT INTO etapas_servico_grupos (etapa_id, grupo_id) VALUES (?, ?)", [etapa_id, grupo_id]);
+          }
+        }
+      }
+
+      res.json({ id: atividadeId });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/parametros-servico/:id", requireAdmin, async (req, res) => {
+    const { codigo, nome, unidade_medida, produtividade, produtividade_media, unidade_tempo } = req.body;
+    try {
+      await db.run(
+        "UPDATE parametros_servico SET codigo = ?, nome = ?, unidade_medida = ?, produtividade = ?, produtividade_media = ?, unidade_tempo = ? WHERE id = ?",
+        [codigo, nome, unidade_medida, produtividade, produtividade_media, unidade_tempo, req.params.id]
+      );
       res.json({ success: true });
     } catch (error: any) {
-      res.status(400).json({ error: "Não é possível excluir esta atividade pois existem execuções ou composições vinculadas a ela." });
+      res.status(500).json({ error: error.message });
     }
   });
 
-  app.get("/api/composicao-atividade", async (req, res) => {
-    const { atividade_id } = req.query;
-    const data = await db.query("SELECT * FROM composicao_atividade WHERE atividade_id = ?", [atividade_id]);
+  app.delete("/api/parametros-servico/:id", requireAdmin, async (req, res) => {
+    await db.run("DELETE FROM parametros_servico WHERE id = ?", [req.params.id]);
+    res.json({ success: true });
+  });
+
+  // Parametros Servico Itens
+  app.get("/api/all-parametros-servico-itens", async (req, res) => {
+    const data = await db.query("SELECT * FROM parametros_servico_itens ORDER BY nome ASC");
     res.json(data);
   });
-  app.post("/api/composicao-atividade", requireAdmin, async (req, res) => {
-    const { atividade_id, tipo_item, descricao, quantidade, unidade_medida } = req.body;
-    const info = await db.run("INSERT INTO composicao_atividade (atividade_id, tipo_item, descricao, quantidade, unidade_medida) VALUES (?, ?, ?, ?, ?)", 
-      [atividade_id, tipo_item, descricao, quantidade, unidade_medida]);
-    res.json({ id: info.lastInsertRowid });
+
+  app.get("/api/parametros-servico/:id/itens", async (req, res) => {
+    const data = await db.query("SELECT * FROM parametros_servico_itens WHERE parametro_id = ?", [req.params.id]);
+    res.json(data);
   });
-  app.put("/api/composicao-atividade/:id", requireAdmin, async (req, res) => {
-    const { tipo_item, descricao, quantidade, unidade_medida } = req.body;
-    await db.run("UPDATE composicao_atividade SET tipo_item = ?, descricao = ?, quantidade = ?, unidade_medida = ? WHERE id = ?", 
-      [tipo_item, descricao, quantidade, unidade_medida, req.params.id]);
+
+  app.post("/api/parametros-servico/:id/itens", requireAdmin, async (req, res) => {
+    const { nome, unidade_medida, quantidade_produtividade, unidade_tempo, valor_parametro } = req.body;
+    await db.run("INSERT INTO parametros_servico_itens (parametro_id, nome, unidade_medida, quantidade_produtividade, unidade_tempo, valor_parametro) VALUES (?, ?, ?, ?, ?, ?)", 
+      [req.params.id, nome, unidade_medida, quantidade_produtividade, unidade_tempo, valor_parametro]);
     res.json({ success: true });
   });
-  app.delete("/api/composicao-atividade/:id", requireAdmin, async (req, res) => {
-    await db.run("DELETE FROM composicao_atividade WHERE id = ?", [req.params.id]);
+
+  app.put("/api/parametros-servico-itens/:id", requireAdmin, async (req, res) => {
+    const { nome, unidade_medida, quantidade_produtividade, unidade_tempo, valor_parametro } = req.body;
+    await db.run("UPDATE parametros_servico_itens SET nome = ?, unidade_medida = ?, quantidade_produtividade = ?, unidade_tempo = ?, valor_parametro = ? WHERE id = ?", 
+      [nome, unidade_medida, quantidade_produtividade, unidade_tempo, valor_parametro, req.params.id]);
     res.json({ success: true });
+  });
+
+  app.delete("/api/parametros-servico-itens/:id", requireAdmin, async (req, res) => {
+    await db.run("DELETE FROM parametros_servico_itens WHERE id = ?", [req.params.id]);
+    res.json({ success: true });
+  });
+
+  // --- GRUPOS DE SERVIÇO ---
+  app.get("/api/grupos-servico", async (req, res) => {
+    const groupConcat = effectivePostgres ? "string_agg(p.nome, ',')" : "GROUP_CONCAT(p.nome)";
+    const groupConcatIds = effectivePostgres ? "string_agg(CAST(p.id AS TEXT), ',')" : "GROUP_CONCAT(p.id)";
+    const data = await db.query(`
+      SELECT g.*, 
+             ${groupConcat} as atividades_nomes, 
+             ${groupConcatIds} as atividades_ids,
+             (SELECT etapa_id FROM etapas_servico_grupos WHERE grupo_id = g.id LIMIT 1) as etapa_id
+      FROM grupos_servico g
+      LEFT JOIN grupos_servico_atividades ga ON g.id = ga.grupo_id
+      LEFT JOIN parametros_servico p ON ga.atividade_id = p.id
+      GROUP BY g.id, g.codigo, g.nome, g.created_at
+      ORDER BY g.codigo ASC, g.nome ASC
+    `);
+    res.json(data);
+  });
+
+  app.post("/api/grupos-servico", requireAdmin, async (req, res) => {
+    const { codigo, nome, atividades_ids, etapa_id } = req.body;
+    const userEmail = req.headers['x-user-email'] || 'Sistema';
+    try {
+      const info = await db.run("INSERT INTO grupos_servico (codigo, nome) VALUES (?, ?)", [codigo, nome]);
+      const grupoId = info.lastInsertRowid;
+      if (atividades_ids && Array.isArray(atividades_ids)) {
+        for (const atId of atividades_ids) {
+          await db.run("INSERT INTO grupos_servico_atividades (grupo_id, atividade_id) VALUES (?, ?)", [grupoId, atId]);
+        }
+      }
+
+      if (etapa_id) {
+        await db.run("INSERT INTO etapas_servico_grupos (etapa_id, grupo_id) VALUES (?, ?)", [etapa_id, grupoId]);
+      }
+
+      await db.run(
+        "INSERT INTO historico_parametros (tipo_item, item_id, codigo, nome, descricao_alteracao, usuario_email) VALUES (?, ?, ?, ?, ?, ?)",
+        ['GRUPO', grupoId, codigo, nome, 'Criação de novo grupo', userEmail]
+      );
+
+      res.json({ id: grupoId });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/grupos-servico/:id", requireAdmin, async (req, res) => {
+    const { codigo, nome, atividades_ids, etapa_id } = req.body;
+    const userEmail = req.headers['x-user-email'] || 'Sistema';
+    try {
+      await db.run("UPDATE grupos_servico SET codigo = ?, nome = ? WHERE id = ?", [codigo, nome, req.params.id]);
+      await db.run("DELETE FROM grupos_servico_atividades WHERE grupo_id = ?", [req.params.id]);
+      if (atividades_ids && Array.isArray(atividades_ids)) {
+        for (const atId of atividades_ids) {
+          await db.run("INSERT INTO grupos_servico_atividades (grupo_id, atividade_id) VALUES (?, ?)", [req.params.id, atId]);
+        }
+      }
+
+      if (etapa_id) {
+        await db.run("DELETE FROM etapas_servico_grupos WHERE grupo_id = ?", [req.params.id]);
+        await db.run("INSERT INTO etapas_servico_grupos (etapa_id, grupo_id) VALUES (?, ?)", [etapa_id, req.params.id]);
+      }
+
+      await db.run(
+        "INSERT INTO historico_parametros (tipo_item, item_id, codigo, nome, descricao_alteracao, usuario_email) VALUES (?, ?, ?, ?, ?, ?)",
+        ['GRUPO', req.params.id, codigo, nome, 'Edição de grupo', userEmail]
+      );
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/grupos-servico/:id", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const userEmail = req.headers['x-user-email'] || 'Sistema';
+      const item = await db.queryOne("SELECT * FROM grupos_servico WHERE id = ?", [id]);
+
+      await db.run("DELETE FROM grupos_servico_atividades WHERE grupo_id = ?", [id]);
+      await db.run("DELETE FROM grupos_servico WHERE id = ?", [id]);
+
+      if (item) {
+        await db.run(
+          "INSERT INTO historico_parametros (tipo_item, item_id, codigo, nome, descricao_alteracao, usuario_email) VALUES (?, ?, ?, ?, ?, ?)",
+          ['GRUPO', id, item.codigo, item.nome, 'Exclusão de grupo', userEmail]
+        );
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- ETAPAS DE SERVIÇO ---
+  app.get("/api/etapas-servico", async (req, res) => {
+    const groupConcat = effectivePostgres ? "string_agg(g.nome, ',')" : "GROUP_CONCAT(g.nome)";
+    const groupConcatIds = effectivePostgres ? "string_agg(CAST(g.id AS TEXT), ',')" : "GROUP_CONCAT(g.id)";
+    const data = await db.query(`
+      SELECT e.*, ${groupConcat} as grupos_nomes, ${groupConcatIds} as grupos_ids
+      FROM etapas_servico e
+      LEFT JOIN etapas_servico_grupos eg ON e.id = eg.etapa_id
+      LEFT JOIN grupos_servico g ON eg.grupo_id = g.id
+      GROUP BY e.id, e.codigo, e.nome, e.created_at
+      ORDER BY e.codigo ASC, e.nome ASC
+    `);
+    res.json(data);
+  });
+
+  app.post("/api/etapas-servico", requireAdmin, async (req, res) => {
+    const { codigo, nome, grupos_ids } = req.body;
+    const userEmail = req.headers['x-user-email'] || 'Sistema';
+    try {
+      const info = await db.run("INSERT INTO etapas_servico (codigo, nome) VALUES (?, ?)", [codigo, nome]);
+      const etapaId = info.lastInsertRowid;
+      if (grupos_ids && Array.isArray(grupos_ids)) {
+        for (const gId of grupos_ids) {
+          await db.run("INSERT INTO etapas_servico_grupos (etapa_id, grupo_id) VALUES (?, ?)", [etapaId, gId]);
+        }
+      }
+
+      await db.run(
+        "INSERT INTO historico_parametros (tipo_item, item_id, codigo, nome, descricao_alteracao, usuario_email) VALUES (?, ?, ?, ?, ?, ?)",
+        ['ETAPA', etapaId, codigo, nome, 'Criação de nova etapa', userEmail]
+      );
+
+      res.json({ id: etapaId });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/etapas-servico/:id", requireAdmin, async (req, res) => {
+    const { codigo, nome, grupos_ids } = req.body;
+    const userEmail = req.headers['x-user-email'] || 'Sistema';
+    try {
+      await db.run("UPDATE etapas_servico SET codigo = ?, nome = ? WHERE id = ?", [codigo, nome, req.params.id]);
+      await db.run("DELETE FROM etapas_servico_grupos WHERE etapa_id = ?", [req.params.id]);
+      if (grupos_ids && Array.isArray(grupos_ids)) {
+        for (const gId of grupos_ids) {
+          await db.run("INSERT INTO etapas_servico_grupos (etapa_id, grupo_id) VALUES (?, ?)", [req.params.id, gId]);
+        }
+      }
+
+      await db.run(
+        "INSERT INTO historico_parametros (tipo_item, item_id, codigo, nome, descricao_alteracao, usuario_email) VALUES (?, ?, ?, ?, ?, ?)",
+        ['ETAPA', req.params.id, codigo, nome, 'Edição de etapa', userEmail]
+      );
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/etapas-servico/:id", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const userEmail = req.headers['x-user-email'] || 'Sistema';
+      const item = await db.queryOne("SELECT * FROM etapas_servico WHERE id = ?", [id]);
+
+      await db.run("DELETE FROM etapas_servico_grupos WHERE etapa_id = ?", [id]);
+      await db.run("DELETE FROM etapas_servico WHERE id = ?", [id]);
+
+      if (item) {
+        await db.run(
+          "INSERT INTO historico_parametros (tipo_item, item_id, codigo, nome, descricao_alteracao, usuario_email) VALUES (?, ?, ?, ?, ?, ?)",
+          ['ETAPA', id, item.codigo, item.nome, 'Exclusão de etapa', userEmail]
+        );
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- HISTÓRICO DE PARÂMETROS ---
+  app.get("/api/historico-parametros", async (req, res) => {
+    try {
+      const history = await db.query("SELECT * FROM historico_parametros ORDER BY data_alteracao DESC LIMIT 100");
+      res.json(history);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
   // --- NUCLEO 4: EXECUCAO DIARIA ---

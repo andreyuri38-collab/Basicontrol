@@ -87,7 +87,7 @@ export default function DailyTasks() {
 
   const fetchData = async () => {
     const [empRes, actRes, envRes] = await Promise.all([
-      fetch('/api/v2/employees?status=Ativo&limit=1000'),
+      fetch('/api/employees?status=Ativo&limit=1000'),
       fetch('/api/atividades?limit=1000'),
       fetch('/api/ambientes?limit=1000')
     ]);
