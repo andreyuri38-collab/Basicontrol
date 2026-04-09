@@ -1,7 +1,7 @@
-import { Router } from 'express';
-import { FinancialController } from '../controllers/FinancialController';
+import express from 'express';
+import { FinancialController } from '../controllers/FinancialController.ts';
 
-const router = Router();
+const router = express.Router();
 
 router.get('/expenses', FinancialController.index);
 router.post('/expenses', FinancialController.store);

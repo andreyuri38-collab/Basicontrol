@@ -1,5 +1,5 @@
-import { Request, Response } from 'express';
-import { FinancialService } from '../services/FinancialService';
+import type { Request, Response } from 'express';
+import { FinancialService } from '../services/FinancialService.ts';
 
 export class FinancialController {
   static async index(req: Request, res: Response) {

@@ -1,15 +1,18 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
-import { Pool } from "pg";
+import pg from "pg";
+import type { Pool } from "pg";
+const { Pool: PoolClass } = pg;
 import path from "path";
 import { fileURLToPath } from "url";
 import bcrypt from "bcryptjs";
-import { google } from "googleapis";
+import googleapis from "googleapis";
+const { google } = googleapis;
 import fs from "fs";
 import { Readable } from "stream";
 import { parse, isValid, format, addDays } from "date-fns";
-import apiRoutes from './backend/routes';
+import apiRoutes from './backend/routes/index.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,7 +32,7 @@ let dbStatus = "SQLite (Local/Temporário)";
 let effectivePostgres = false;
 
 if (isPostgresAttempt) {
-  pgPool = new Pool({
+  pgPool = new PoolClass({
     connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false },
     connectionTimeoutMillis: 10000,
@@ -673,10 +676,10 @@ app.use('/api/v2', apiRoutes);
     const params: any[] = [];
 
     if (search && search !== '') {
-      query += " AND (name LIKE ? OR role LIKE ? OR code LIKE ?)";
-      countQuery += " AND (name LIKE ? OR role LIKE ? OR code LIKE ?)";
+      query += " AND (name LIKE ? OR role LIKE ? OR code LIKE ? OR document LIKE ?)";
+      countQuery += " AND (name LIKE ? OR role LIKE ? OR code LIKE ? OR document LIKE ?)";
       const searchParam = `%${search}%`;
-      params.push(searchParam, searchParam, searchParam);
+      params.push(searchParam, searchParam, searchParam, searchParam);
     }
 
     if (status && status !== 'all' && status !== 'Todos') {
@@ -792,6 +795,22 @@ app.use('/api/v2', apiRoutes);
     await db.run("UPDATE employees SET code = ?, name = ?, role = ?, document = ?, phone = ?, is_registered = ?, base_salary = ?, admission_date = ?, bank_name = ?, bank_agency = ?, bank_operation = ?, bank_account = ?, bank_observations = ?, vacation_preview = ?, status = ?, resignation_date = ?, photo = ? WHERE id = ?",
       [code, name, role, document, phone, is_registered, base_salary, admission_date, bank_name, bank_agency, bank_operation, bank_account, bank_observations, vacation_preview, status, resignation_date, photo, req.params.id]);
     res.json({ success: true });
+  });
+
+  app.get("/api/employees/:id/linked-records", async (req, res) => {
+    const { id } = req.params;
+    const frequencyCount = await db.queryOne("SELECT COUNT(*) as count FROM frequency WHERE employee_id = ?", [id]);
+    const payrollCount = await db.queryOne("SELECT COUNT(*) as count FROM payroll WHERE employee_id = ?", [id]);
+    const medicalCount = await db.queryOne("SELECT COUNT(*) as count FROM medical_certificates WHERE employee_id = ?", [id]);
+    const signatureCount = await db.queryOne("SELECT COUNT(*) as count FROM signatures WHERE employee_id = ?", [id]);
+    
+    res.json({
+      frequency: parseInt(frequencyCount.count),
+      payroll: parseInt(payrollCount.count),
+      medical: parseInt(medicalCount.count),
+      signatures: parseInt(signatureCount.count),
+      total: parseInt(frequencyCount.count) + parseInt(payrollCount.count) + parseInt(medicalCount.count) + parseInt(signatureCount.count)
+    });
   });
 
   app.delete("/api/employees/:id", requireAdmin, async (req, res) => {

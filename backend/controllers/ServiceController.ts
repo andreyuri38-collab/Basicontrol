@@ -1,5 +1,5 @@
-import { Request, Response } from 'express';
-import { ServiceService } from '../services/ServiceService';
+import type { Request, Response } from 'express';
+import { ServiceService } from '../services/ServiceService.ts';
 
 export class ServiceController {
   static async index(req: Request, res: Response) {

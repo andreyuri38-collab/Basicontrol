@@ -1,5 +1,5 @@
-import { Request, Response } from 'express';
-import { EnvironmentService } from '../services/EnvironmentService';
+import type { Request, Response } from 'express';
+import { EnvironmentService } from '../services/EnvironmentService.ts';
 
 export class EnvironmentController {
   static async index(req: Request, res: Response) {

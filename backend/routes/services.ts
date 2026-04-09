@@ -1,7 +1,7 @@
-import { Router } from 'express';
-import { ServiceController } from '../controllers/ServiceController';
+import express from 'express';
+import { ServiceController } from '../controllers/ServiceController.ts';
 
-const router = Router();
+const router = express.Router();
 
 router.get('/', ServiceController.index);
 router.post('/', ServiceController.store);

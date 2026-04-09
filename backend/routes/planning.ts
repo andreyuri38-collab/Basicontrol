@@ -1,7 +1,7 @@
-import { Router } from 'express';
-import { PlanningController } from '../controllers/PlanningController';
+import express from 'express';
+import { PlanningController } from '../controllers/PlanningController.ts';
 
-const router = Router();
+const router = express.Router();
 
 router.get('/', PlanningController.index);
 router.post('/', PlanningController.store);

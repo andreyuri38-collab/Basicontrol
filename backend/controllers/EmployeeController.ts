@@ -1,5 +1,5 @@
-import { Request, Response } from 'express';
-import { EmployeeService } from '../services/EmployeeService';
+import type { Request, Response } from 'express';
+import { EmployeeService } from '../services/EmployeeService.ts';
 
 export class EmployeeController {
   static async index(req: Request, res: Response) {

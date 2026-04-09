@@ -1,5 +1,5 @@
-import { Request, Response } from 'express';
-import { DiaryService } from '../services/DiaryService';
+import type { Request, Response } from 'express';
+import { DiaryService } from '../services/DiaryService.ts';
 
 export class DiaryController {
   static async index(req: Request, res: Response) {

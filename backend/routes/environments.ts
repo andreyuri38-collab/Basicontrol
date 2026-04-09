@@ -1,7 +1,7 @@
-import { Router } from 'express';
-import { EnvironmentController } from '../controllers/EnvironmentController';
+import express from 'express';
+import { EnvironmentController } from '../controllers/EnvironmentController.ts';
 
-const router = Router();
+const router = express.Router();
 
 router.get('/', EnvironmentController.index);
 router.get('/flowchart', EnvironmentController.getFlowchart);

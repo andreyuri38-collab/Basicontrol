@@ -1,7 +1,7 @@
-import { Router } from 'express';
-import { EmployeeController } from '../controllers/EmployeeController';
+import express from 'express';
+import { EmployeeController } from '../controllers/EmployeeController.ts';
 
-const router = Router();
+const router = express.Router();
 
 router.get('/', EmployeeController.index);
 router.get('/next-code', EmployeeController.getNextCode);

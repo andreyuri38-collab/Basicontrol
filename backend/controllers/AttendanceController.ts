@@ -1,5 +1,5 @@
-import { Request, Response } from 'express';
-import { AttendanceService } from '../services/AttendanceService';
+import type { Request, Response } from 'express';
+import { AttendanceService } from '../services/AttendanceService.ts';
 
 export class AttendanceController {
   static async registerMedicalCertificate(req: Request, res: Response) {

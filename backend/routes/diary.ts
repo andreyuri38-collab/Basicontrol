@@ -1,7 +1,7 @@
-import { Router } from 'express';
-import { DiaryController } from '../controllers/DiaryController';
+import express from 'express';
+import { DiaryController } from '../controllers/DiaryController.ts';
 
-const router = Router();
+const router = express.Router();
 
 router.get('/', DiaryController.index);
 router.post('/', DiaryController.store);

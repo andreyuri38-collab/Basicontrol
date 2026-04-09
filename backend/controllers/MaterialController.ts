@@ -1,5 +1,5 @@
-import { Request, Response } from 'express';
-import { MaterialService } from '../services/MaterialService';
+import type { Request, Response } from 'express';
+import { MaterialService } from '../services/MaterialService.ts';
 
 export class MaterialController {
   static async requirements(req: Request, res: Response) {

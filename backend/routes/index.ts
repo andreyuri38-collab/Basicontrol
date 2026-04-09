@@ -1,14 +1,14 @@
-import { Router } from 'express';
-import planningRoutes from './planning';
-import financialRoutes from './financial';
-import diaryRoutes from './diary';
-import employeeRoutes from './employees';
-import attendanceRoutes from './attendance';
-import environmentRoutes from './environments';
-import serviceRoutes from './services';
-import { MaterialController } from '../controllers/MaterialController';
+import express from 'express';
+import planningRoutes from './planning.ts';
+import financialRoutes from './financial.ts';
+import diaryRoutes from './diary.ts';
+import employeeRoutes from './employees.ts';
+import attendanceRoutes from './attendance.ts';
+import environmentRoutes from './environments.ts';
+import serviceRoutes from './services.ts';
+import { MaterialController } from '../controllers/MaterialController.ts';
 
-const router = Router();
+const router = express.Router();
 
 router.use('/planning', planningRoutes);
 router.use('/financial', financialRoutes);

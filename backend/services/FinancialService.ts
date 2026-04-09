@@ -1,4 +1,4 @@
-import prisma from '../config/database';
+import prisma from '../config/database.ts';
 
 export class FinancialService {
   static async getExpenses(filters: any) {

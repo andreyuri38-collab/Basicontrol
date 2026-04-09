@@ -6,7 +6,7 @@ interface ConfirmationModalProps {
   onClose: () => void;
   onConfirm: () => void;
   title: string;
-  message: string;
+  message: string | React.ReactNode;
   confirmText?: string;
   cancelText?: string;
   type?: 'danger' | 'warning' | 'info';
@@ -61,7 +61,7 @@ export function ConfirmationModal({
                 <X size={20} />
               </button>
             </div>
-            <p className="text-slate-500 leading-relaxed">{message}</p>
+            <div className="text-slate-500 leading-relaxed">{message}</div>
           </div>
         </div>
         <div className="p-6 bg-slate-50 flex justify-end gap-3">

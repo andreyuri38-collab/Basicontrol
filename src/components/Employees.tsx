@@ -21,7 +21,9 @@ import {
   Stethoscope,
   UserMinus,
   RefreshCw,
-  Users
+  Users,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -60,6 +62,8 @@ export default function Employees({ userRole }: EmployeesProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [isTerminateModalOpen, setIsTerminateModalOpen] = useState(false);
   const [isMedicalModalOpen, setIsMedicalModalOpen] = useState(false);
+  const [isBankDataOpen, setIsBankDataOpen] = useState(false);
+  const [linkedRecords, setLinkedRecords] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [employeeAttendance, setEmployeeAttendance] = useState<any[]>([]);
@@ -194,8 +198,16 @@ export default function Employees({ userRole }: EmployeesProps) {
     setIsModalOpen(true);
   };
 
-  const handleDelete = (employee: any) => {
+  const handleDelete = async (employee: any) => {
     setEmployeeToDelete(employee);
+    try {
+      const res = await fetch(`/api/employees/${employee.id}/linked-records`);
+      const data = await res.json();
+      setLinkedRecords(data);
+    } catch (err) {
+      console.error('Error fetching linked records:', err);
+      setLinkedRecords(null);
+    }
     setIsDeleteModalOpen(true);
   };
 
@@ -812,9 +824,22 @@ export default function Employees({ userRole }: EmployeesProps) {
                   <input 
                     required
                     type="date" 
+                    pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}"
+                    title="Use o formato YYYY-MM-DD"
                     className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
                     value={formData.admission_date}
                     onChange={e => setFormData({...formData, admission_date: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-slate-700">Previsão de Férias</label>
+                  <input 
+                    type="date" 
+                    pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}"
+                    title="Use o formato YYYY-MM-DD"
+                    className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                    value={formData.vacation_preview}
+                    onChange={e => setFormData({...formData, vacation_preview: e.target.value})}
                   />
                 </div>
                 {isEditing && (
@@ -835,6 +860,8 @@ export default function Employees({ userRole }: EmployeesProps) {
                         <label className="text-sm font-semibold text-slate-700">Data de Demissão</label>
                         <input 
                           type="date" 
+                          pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}"
+                          title="Use o formato YYYY-MM-DD"
                           className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
                           value={formData.resignation_date}
                           onChange={e => setFormData({...formData, resignation_date: e.target.value})}
@@ -844,55 +871,71 @@ export default function Employees({ userRole }: EmployeesProps) {
                   </>
                 )}
               </div>
-              <div className="space-y-4">
-                <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Dados Bancários</h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-semibold text-slate-700">Banco</label>
-                    <input 
-                      type="text" 
-                      className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
-                      value={formData.bank_name}
-                      onChange={e => setFormData({...formData, bank_name: e.target.value})}
-                    />
+              
+              <div className="border border-slate-100 rounded-2xl overflow-hidden">
+                <button 
+                  type="button"
+                  onClick={() => setIsBankDataOpen(!isBankDataOpen)}
+                  className="w-full px-6 py-4 bg-slate-50 flex items-center justify-between hover:bg-slate-100 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <DollarSign size={18} className="text-emerald-500" />
+                    <span className="font-bold text-slate-700 uppercase text-xs tracking-wider">Dados Bancários</span>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-semibold text-slate-700">Agência</label>
-                    <input 
-                      type="text" 
-                      className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
-                      value={formData.bank_agency}
-                      onChange={e => setFormData({...formData, bank_agency: e.target.value})}
-                    />
+                  {isBankDataOpen ? <ChevronUp size={20} className="text-slate-400" /> : <ChevronDown size={20} className="text-slate-400" />}
+                </button>
+                
+                {isBankDataOpen && (
+                  <div className="p-6 space-y-4 animate-in slide-in-from-top-2 duration-200">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-semibold text-slate-700">Banco</label>
+                        <input 
+                          type="text" 
+                          className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                          value={formData.bank_name}
+                          onChange={e => setFormData({...formData, bank_name: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-semibold text-slate-700">Agência</label>
+                        <input 
+                          type="text" 
+                          className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                          value={formData.bank_agency}
+                          onChange={e => setFormData({...formData, bank_agency: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-semibold text-slate-700">Operação</label>
+                        <input 
+                          type="text" 
+                          className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                          value={formData.bank_operation}
+                          onChange={e => setFormData({...formData, bank_operation: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-2 md:col-span-2">
+                        <label className="text-sm font-semibold text-slate-700">Conta</label>
+                        <input 
+                          type="text" 
+                          className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                          value={formData.bank_account}
+                          onChange={e => setFormData({...formData, bank_account: e.target.value})}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">Observações Bancárias</label>
+                      <textarea 
+                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none h-20"
+                        placeholder="Pix, CPF do titular, etc..."
+                        value={formData.bank_observations}
+                        onChange={e => setFormData({...formData, bank_observations: e.target.value})}
+                      ></textarea>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-semibold text-slate-700">Operação</label>
-                    <input 
-                      type="text" 
-                      className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
-                      value={formData.bank_operation}
-                      onChange={e => setFormData({...formData, bank_operation: e.target.value})}
-                    />
-                  </div>
-                  <div className="space-y-2 md:col-span-2">
-                    <label className="text-sm font-semibold text-slate-700">Conta</label>
-                    <input 
-                      type="text" 
-                      className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
-                      value={formData.bank_account}
-                      onChange={e => setFormData({...formData, bank_account: e.target.value})}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-slate-700">Observações Bancárias</label>
-                  <textarea 
-                    className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none h-20"
-                    placeholder="Pix, CPF do titular, etc..."
-                    value={formData.bank_observations}
-                    onChange={e => setFormData({...formData, bank_observations: e.target.value})}
-                  ></textarea>
-                </div>
+                )}
               </div>
               <div className="flex justify-end gap-3 pt-4">
                 <button 
@@ -1200,10 +1243,33 @@ export default function Employees({ userRole }: EmployeesProps) {
         onClose={() => {
           setIsDeleteModalOpen(false);
           setEmployeeToDelete(null);
+          setLinkedRecords(null);
         }}
         onConfirm={confirmDelete}
         title="Excluir Funcionário?"
-        message={employeeToDelete ? `Você está prestes a excluir ${employeeToDelete.name}. Esta ação não pode ser desfeita e removerá todos os registros associados.` : ''}
+        message={employeeToDelete ? (
+          <div className="space-y-3">
+            <p>Você está prestes a excluir <span className="font-bold">{employeeToDelete.name}</span>. Esta ação não pode ser desfeita.</p>
+            {linkedRecords && linkedRecords.total > 0 && (
+              <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-700 text-xs space-y-1">
+                <p className="font-bold flex items-center gap-1">
+                  <AlertTriangle size={14} />
+                  Registros vinculados que serão removidos:
+                </p>
+                <ul className="list-disc list-inside ml-1">
+                  {linkedRecords.frequency > 0 && <li>{linkedRecords.frequency} registros de frequência</li>}
+                  {linkedRecords.payroll > 0 && <li>{linkedRecords.payroll} lançamentos financeiros</li>}
+                  {linkedRecords.medical > 0 && <li>{linkedRecords.medical} atestados médicos</li>}
+                  {linkedRecords.signatures > 0 && <li>{linkedRecords.signatures} assinaturas digitais</li>}
+                </ul>
+                <p className="mt-2 font-semibold italic">A exclusão removerá permanentemente todos esses dados associados.</p>
+              </div>
+            )}
+            {linkedRecords && linkedRecords.total === 0 && (
+              <p className="text-slate-500 text-sm italic">Nenhum registro vinculado encontrado, mas os dados básicos do funcionário serão removidos.</p>
+            )}
+          </div>
+        ) : ''}
       />
     </div>
   );

@@ -1,5 +1,5 @@
-import { Request, Response } from 'express';
-import { PlanningService } from '../services/PlanningService';
+import type { Request, Response } from 'express';
+import { PlanningService } from '../services/PlanningService.ts';
 
 export class PlanningController {
   static async index(req: Request, res: Response) {

@@ -1,4 +1,4 @@
-import prisma from '../config/database';
+import prisma from '../config/database.ts';
 
 export class PlanningService {
   static async getAll(filters: any) {

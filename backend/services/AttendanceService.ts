@@ -1,4 +1,4 @@
-import prisma from '../config/database';
+import prisma from '../config/database.ts';
 import { addDays, format, parseISO } from 'date-fns';
 
 export class AttendanceService {

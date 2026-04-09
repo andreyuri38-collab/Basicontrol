@@ -1,4 +1,4 @@
-import prisma from '../config/database';
+import prisma from '../config/database.ts';
 import { startOfMonth, endOfMonth, isWithinInterval, parseISO, addMonths } from 'date-fns';
 
 export class EmployeeService {
@@ -10,7 +10,8 @@ export class EmployeeService {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
         { role: { contains: search, mode: 'insensitive' } },
-        { code: { contains: search, mode: 'insensitive' } }
+        { code: { contains: search, mode: 'insensitive' } },
+        { document: { contains: search, mode: 'insensitive' } }
       ];
     }
 
