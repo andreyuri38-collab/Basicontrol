@@ -14,7 +14,8 @@ import {
   Package,
   CheckSquare,
   Plus,
-  Trash2
+  Trash2,
+  User
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -62,7 +63,12 @@ export default function Dashboard() {
   const [checklists, setChecklists] = useState<any[]>([]);
   const [totalChecklists, setTotalChecklists] = useState(0);
   const [currentChecklistPage, setCurrentChecklistPage] = useState(1);
-  const [newTask, setNewTask] = useState('');
+  const [newTask, setNewTask] = useState({
+    task: '',
+    responsible: '',
+    due_date: '',
+    priority: 'Média'
+  });
   const itemsPerPage = 20;
 
   useEffect(() => {
@@ -92,13 +98,24 @@ export default function Dashboard() {
 
   const addChecklistItem = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTask.trim()) return;
+    if (!newTask.task.trim()) return;
     fetch('/api/checklists', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ task: newTask, category: 'Geral' })
+      body: JSON.stringify({ 
+        task: newTask.task, 
+        category: 'Geral',
+        responsible: newTask.responsible,
+        due_date: newTask.due_date,
+        priority: newTask.priority
+      })
     }).then(() => {
-      setNewTask('');
+      setNewTask({
+        task: '',
+        responsible: '',
+        due_date: '',
+        priority: 'Média'
+      });
       fetchChecklists(currentChecklistPage);
     });
   };
@@ -493,39 +510,90 @@ export default function Dashboard() {
               </h3>
             </div>
             
-            <form onSubmit={addChecklistItem} className="flex gap-2 mb-6">
+            <form onSubmit={addChecklistItem} className="space-y-3 mb-6">
               <input 
                 type="text" 
                 placeholder="Nova tarefa..."
-                className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
-                value={newTask}
-                onChange={e => setNewTask(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                value={newTask.task}
+                onChange={e => setNewTask({ ...newTask, task: e.target.value })}
               />
-              <button type="submit" className="p-2 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600">
-                <Plus size={20} />
-              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <input 
+                  type="text" 
+                  placeholder="Responsável"
+                  className="px-3 py-2 text-sm border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                  value={newTask.responsible}
+                  onChange={e => setNewTask({ ...newTask, responsible: e.target.value })}
+                />
+                <input 
+                  type="date" 
+                  className="px-3 py-2 text-sm border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                  value={newTask.due_date}
+                  onChange={e => setNewTask({ ...newTask, due_date: e.target.value })}
+                />
+              </div>
+              <div className="flex gap-2">
+                <select 
+                  className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                  value={newTask.priority}
+                  onChange={e => setNewTask({ ...newTask, priority: e.target.value })}
+                >
+                  <option value="Baixa">Prioridade Baixa</option>
+                  <option value="Média">Prioridade Média</option>
+                  <option value="Alta">Prioridade Alta</option>
+                </select>
+                <button type="submit" className="px-4 py-2 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 font-bold text-sm">
+                  Adicionar
+                </button>
+              </div>
             </form>
 
             <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
               {checklists.map(item => (
-                <div key={item.id} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100 group">
-                  <button 
-                    onClick={() => toggleChecklist(item.id, item.status)}
-                    className={`shrink-0 w-5 h-5 rounded border flex items-center justify-center transition-colors ${
-                      item.status === 'Concluído' ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 bg-white'
-                    }`}
-                  >
-                    {item.status === 'Concluído' && <CheckCircle2 size={12} />}
-                  </button>
-                  <span className={`flex-1 text-sm font-medium ${item.status === 'Concluído' ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
-                    {item.task}
-                  </span>
-                  <button 
-                    onClick={() => deleteChecklistItem(item.id)}
-                    className="p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                <div key={item.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 group space-y-2">
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => toggleChecklist(item.id, item.status)}
+                      className={`shrink-0 w-5 h-5 rounded border flex items-center justify-center transition-colors ${
+                        item.status === 'Concluído' ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 bg-white'
+                      }`}
+                    >
+                      {item.status === 'Concluído' && <CheckCircle2 size={12} />}
+                    </button>
+                    <span className={`flex-1 text-sm font-bold ${item.status === 'Concluído' ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                      {item.task}
+                    </span>
+                    <button 
+                      onClick={() => deleteChecklistItem(item.id)}
+                      className="p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  {(item.responsible || item.due_date || item.priority) && (
+                    <div className="flex flex-wrap gap-2 pl-8">
+                      {item.responsible && (
+                        <span className="flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-100">
+                          <User size={10} /> {item.responsible}
+                        </span>
+                      )}
+                      {item.due_date && (
+                        <span className="flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-100">
+                          <Clock size={10} /> {item.due_date.split('-').reverse().join('/')}
+                        </span>
+                      )}
+                      {item.priority && (
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                          item.priority === 'Alta' ? 'bg-red-50 text-red-600 border-red-100' :
+                          item.priority === 'Média' ? 'bg-amber-50 text-amber-600 border-amber-100' :
+                          'bg-blue-50 text-blue-600 border-blue-100'
+                        }`}>
+                          {item.priority}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
               {checklists.length === 0 && (

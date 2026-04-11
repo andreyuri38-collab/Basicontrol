@@ -224,9 +224,36 @@ async function initDb() {
     );
 
     -- Nucleo 2: Parametros Construtivos
+    CREATE TABLE IF NOT EXISTS obras (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      nome_obra TEXT NOT NULL,
+      descricao TEXT,
+      ordem INTEGER DEFAULT 0,
+      data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS setores (
       id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      obra_id INTEGER REFERENCES obras(id),
       nome_setor TEXT NOT NULL,
+      tipo TEXT DEFAULT 'Torre', -- 'Torre' ou 'Area Comum'
+      descricao TEXT,
+      ordem INTEGER DEFAULT 0,
+      data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS locais (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      setor_id INTEGER REFERENCES setores(id),
+      nome_local TEXT NOT NULL,
+      tipo TEXT DEFAULT 'Individual', -- 'Individual' ou 'Comum'
+      area_total REAL,
+      piso TEXT,
+      parede TEXT,
+      teto TEXT,
+      esquadrias TEXT,
+      metais TEXT,
+      loucas TEXT,
       descricao TEXT,
       ordem INTEGER DEFAULT 0,
       data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -237,6 +264,32 @@ async function initDb() {
       nome TEXT NOT NULL,
       descricao TEXT,
       icone TEXT,
+      perimetro REAL DEFAULT 0,
+      altura REAL DEFAULT 0,
+      descontos_levante REAL DEFAULT 0,
+      descontos_face REAL DEFAULT 0,
+      area_piso REAL DEFAULT 0,
+      area_teto REAL DEFAULT 0,
+      tem_portas INTEGER DEFAULT 0,
+      portas_json TEXT,
+      tem_janelas INTEGER DEFAULT 0,
+      janelas_json TEXT,
+      tem_bancada INTEGER DEFAULT 0,
+      bancada_json TEXT,
+      tem_divisoria INTEGER DEFAULT 0,
+      divisoria_json TEXT,
+      tem_soleira INTEGER DEFAULT 0,
+      soleira_json TEXT,
+      tem_divbox INTEGER DEFAULT 0,
+      divbox_json TEXT,
+      tem_hidrossanitario INTEGER DEFAULT 0,
+      hidrossanitario_json TEXT,
+      tem_eletrico INTEGER DEFAULT 0,
+      eletrico_json TEXT,
+      tem_comunicacao INTEGER DEFAULT 0,
+      comunicacao_json TEXT,
+      tem_guarda_corpo INTEGER DEFAULT 0,
+      tem_ar_condicionado INTEGER DEFAULT 0,
       data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -245,13 +298,31 @@ async function initDb() {
       setor_id INTEGER REFERENCES setores(id),
       nome_pavimento TEXT NOT NULL,
       descricao TEXT,
-      ordem INTEGER DEFAULT 0
+      ordem INTEGER DEFAULT 0,
+      data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS categorias (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      local_id INTEGER REFERENCES locais(id),
+      nome_categoria TEXT NOT NULL,
+      ordem INTEGER DEFAULT 0,
+      data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS unidades (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      categoria_id INTEGER REFERENCES categorias(id),
+      nome_unidade TEXT NOT NULL,
+      descricao TEXT,
+      ordem INTEGER DEFAULT 0,
+      data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS ambientes (
       id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
-      setor_id INTEGER REFERENCES setores(id),
-      pavimento_id INTEGER REFERENCES pavimentos(id),
+      unidade_id INTEGER REFERENCES unidades(id),
+      tipo_ambiente_id INTEGER REFERENCES tipos_ambiente(id),
       nome_ambiente TEXT NOT NULL,
       tipo_ambiente TEXT NOT NULL, -- SALA, AREA TECNICA, AREA COMUM, MACRO
       area_total REAL,
@@ -263,6 +334,17 @@ async function initDb() {
       loucas TEXT,
       descricao TEXT,
       ordem INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS parametros_servico (
+      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
+      codigo TEXT NOT NULL,
+      nome TEXT NOT NULL,
+      unidade_medida TEXT,
+      produtividade REAL,
+      produtividade_media REAL,
+      unidade_tempo TEXT DEFAULT 'DIA', -- DIA, HORA
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS parametros_servico_itens (
@@ -349,17 +431,6 @@ async function initDb() {
       atividade_pre_requisito_id INTEGER REFERENCES atividades(id)
     );
 
-    CREATE TABLE IF NOT EXISTS parametros_servico (
-      id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
-      codigo TEXT NOT NULL,
-      nome TEXT NOT NULL,
-      unidade_medida TEXT,
-      produtividade REAL,
-      produtividade_media REAL,
-      unidade_tempo TEXT DEFAULT 'DIA', -- DIA, HORA
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
     CREATE TABLE IF NOT EXISTS grupos_servico (
       id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
       codigo TEXT,
@@ -424,6 +495,9 @@ async function initDb() {
       task TEXT NOT NULL,
       category TEXT DEFAULT 'Geral',
       status TEXT DEFAULT 'Pendente',
+      responsible TEXT,
+      due_date TEXT,
+      priority TEXT DEFAULT 'Média',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -451,6 +525,37 @@ async function initDb() {
   } catch (e) {}
 
   // Migrations
+  try { await db.exec("ALTER TABLE setores ADD COLUMN obra_id INTEGER REFERENCES obras(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN unidade_id INTEGER REFERENCES unidades(id);"); } catch(e) {}
+  
+  // Tipos Ambiente expansion
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN perimetro REAL DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN altura REAL DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN descontos_levante REAL DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN descontos_face REAL DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN area_piso REAL DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN area_teto REAL DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN tem_portas INTEGER DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN portas_json TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN tem_janelas INTEGER DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN janelas_json TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN tem_bancada INTEGER DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN bancada_json TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN tem_divisoria INTEGER DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN divisoria_json TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN tem_soleira INTEGER DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN soleira_json TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN tem_divbox INTEGER DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN divbox_json TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN tem_hidrossanitario INTEGER DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN hidrossanitario_json TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN tem_eletrico INTEGER DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN eletrico_json TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN tem_comunicacao INTEGER DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN comunicacao_json TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN tem_guarda_corpo INTEGER DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN tem_ar_condicionado INTEGER DEFAULT 0;"); } catch(e) {}
+
   try { await db.exec("ALTER TABLE grupos_atividade ADD COLUMN codigo TEXT;"); } catch(e) {}
   try { await db.exec("ALTER TABLE grupos_atividade ADD COLUMN unidade_medida TEXT;"); } catch(e) {}
   try { await db.exec("ALTER TABLE grupos_atividade ADD COLUMN sequencia INTEGER DEFAULT 0;"); } catch(e) {}
@@ -1079,6 +1184,74 @@ app.use('/api/v2', apiRoutes);
   });
 
   // --- NUCLEO 2: PARAMETROS CONSTRUTIVOS ---
+  app.get("/api/obras", async (req, res) => {
+    const { page, limit, offset } = getPagination(req);
+    const data = await db.query(`SELECT * FROM obras ORDER BY ordem ASC, nome_obra ASC LIMIT ? OFFSET ?`, [limit, offset]);
+    const total = await db.queryOne("SELECT COUNT(*) as count FROM obras");
+    res.json({ data, total: parseInt(total.count), page, limit });
+  });
+  app.get("/api/obras/:id", async (req, res) => {
+    const data = await db.queryOne("SELECT * FROM obras WHERE id = ?", [req.params.id]);
+    if (data) res.json(data);
+    else res.status(404).json({ error: "Obra não encontrada" });
+  });
+  app.post("/api/obras", requireAdmin, async (req, res) => {
+    const { nome_obra, descricao } = req.body;
+    const info = await db.run("INSERT INTO obras (nome_obra, descricao) VALUES (?, ?)", [nome_obra, descricao]);
+    res.json({ id: info.lastInsertRowid });
+  });
+  app.put("/api/obras/:id", requireAdmin, async (req, res) => {
+    const { nome_obra, descricao } = req.body;
+    await db.run("UPDATE obras SET nome_obra = ?, descricao = ? WHERE id = ?", [nome_obra, descricao, req.params.id]);
+    res.json({ success: true });
+  });
+  app.delete("/api/obras/:id", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      // Cascading delete: Obra -> Setores -> Locais -> Categorias -> Unidades -> Ambientes -> Servicos
+      await db.run(`DELETE FROM servicos_ambiente WHERE ambiente_id IN (
+        SELECT id FROM ambientes WHERE unidade_id IN (
+          SELECT id FROM unidades WHERE categoria_id IN (
+            SELECT id FROM categorias WHERE local_id IN (
+              SELECT id FROM locais WHERE setor_id IN (
+                SELECT id FROM setores WHERE obra_id = ?
+              )
+            )
+          )
+        )
+      )`, [id]);
+      await db.run(`DELETE FROM ambientes WHERE unidade_id IN (
+        SELECT id FROM unidades WHERE categoria_id IN (
+          SELECT id FROM categorias WHERE local_id IN (
+            SELECT id FROM locais WHERE setor_id IN (
+              SELECT id FROM setores WHERE obra_id = ?
+            )
+          )
+        )
+      )`, [id]);
+      await db.run(`DELETE FROM unidades WHERE categoria_id IN (
+        SELECT id FROM categorias WHERE local_id IN (
+          SELECT id FROM locais WHERE setor_id IN (
+            SELECT id FROM setores WHERE obra_id = ?
+          )
+        )
+      )`, [id]);
+      await db.run(`DELETE FROM categorias WHERE local_id IN (
+        SELECT id FROM locais WHERE setor_id IN (
+          SELECT id FROM setores WHERE obra_id = ?
+        )
+      )`, [id]);
+      await db.run(`DELETE FROM locais WHERE setor_id IN (
+        SELECT id FROM setores WHERE obra_id = ?
+      )`, [id]);
+      await db.run("DELETE FROM setores WHERE obra_id = ?", [id]);
+      await db.run("DELETE FROM obras WHERE id = ?", [id]);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Erro ao excluir obra: " + error.message });
+    }
+  });
+
   app.post("/api/copy/floors", requireAdmin, async (req, res) => {
     const { fromSectorId, toSectorId } = req.body;
     try {
@@ -1155,8 +1328,89 @@ app.use('/api/v2', apiRoutes);
     }
   });
 
+  app.get("/api/locais", async (req, res) => {
+    const { setor_id } = req.query;
+    let sql = "SELECT * FROM locais WHERE 1=1";
+    const params = [];
+    if (setor_id) { sql += " AND setor_id = ?"; params.push(setor_id); }
+    sql += " ORDER BY ordem, nome_local";
+    const data = await db.query(sql, params);
+    res.json(data);
+  });
+
+  app.post("/api/locais", requireAdmin, async (req, res) => {
+    const { setor_id, nome_local, tipo, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao } = req.body;
+    const info = await db.run("INSERT INTO locais (setor_id, nome_local, tipo, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+      [setor_id, nome_local, tipo, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao]);
+    res.json({ id: info.lastInsertRowid });
+  });
+
+  app.put("/api/locais/:id", requireAdmin, async (req, res) => {
+    const { nome_local, tipo, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao } = req.body;
+    await db.run("UPDATE locais SET nome_local = ?, tipo = ?, area_total = ?, piso = ?, parede = ?, teto = ?, esquadrias = ?, metais = ?, loucas = ?, descricao = ? WHERE id = ?", 
+      [nome_local, tipo, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao, req.params.id]);
+    res.json({ success: true });
+  });
+
+  app.get("/api/categorias", async (req, res) => {
+    const { local_id } = req.query;
+    let sql = "SELECT * FROM categorias WHERE 1=1";
+    const params = [];
+    if (local_id) { sql += " AND local_id = ?"; params.push(local_id); }
+    sql += " ORDER BY ordem, nome_categoria";
+    const data = await db.query(sql, params);
+    res.json(data);
+  });
+
+  app.post("/api/categorias", requireAdmin, async (req, res) => {
+    const { local_id, nome_categoria } = req.body;
+    const info = await db.run("INSERT INTO categorias (local_id, nome_categoria) VALUES (?, ?)", [local_id, nome_categoria]);
+    res.json({ id: info.lastInsertRowid });
+  });
+
+  app.get("/api/unidades", async (req, res) => {
+    const { categoria_id } = req.query;
+    let sql = "SELECT * FROM unidades WHERE 1=1";
+    const params = [];
+    if (categoria_id) { sql += " AND categoria_id = ?"; params.push(categoria_id); }
+    sql += " ORDER BY ordem, nome_unidade";
+    const data = await db.query(sql, params);
+    res.json(data);
+  });
+
+  app.post("/api/unidades", requireAdmin, async (req, res) => {
+    const { categoria_id, nome_unidade, descricao } = req.body;
+    const info = await db.run("INSERT INTO unidades (categoria_id, nome_unidade, descricao) VALUES (?, ?, ?)", [categoria_id, nome_unidade, descricao]);
+    res.json({ id: info.lastInsertRowid });
+  });
+
+  app.get("/api/ambientes", async (req, res) => {
+    const { unidade_id } = req.query;
+    let sql = "SELECT * FROM ambientes WHERE 1=1";
+    const params = [];
+    if (unidade_id) { sql += " AND unidade_id = ?"; params.push(unidade_id); }
+    sql += " ORDER BY ordem, nome_ambiente";
+    const data = await db.query(sql, params);
+    res.json(data);
+  });
+
+  app.post("/api/ambientes", requireAdmin, async (req, res) => {
+    const { unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao } = req.body;
+    const info = await db.run("INSERT INTO ambientes (unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+      [unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente || 'SALA', area_total, piso, parede, teto, esquadrias, metais, loucas, descricao]);
+    res.json({ id: info.lastInsertRowid });
+  });
+
+  app.put("/api/ambientes/:id", requireAdmin, async (req, res) => {
+    const { unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao } = req.body;
+    await db.run("UPDATE ambientes SET unidade_id = ?, tipo_ambiente_id = ?, nome_ambiente = ?, tipo_ambiente = ?, area_total = ?, piso = ?, parede = ?, teto = ?, esquadrias = ?, metais = ?, loucas = ?, descricao = ? WHERE id = ?", 
+      [unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao, req.params.id]);
+    res.json({ success: true });
+  });
+
   app.get("/api/setores", async (req, res) => {
     const { page, limit, offset } = getPagination(req);
+    const obra_id = req.query.obra_id;
     const sortField = req.query.sortField as string || 'ordem';
     const sortOrder = req.query.sortOrder as string || 'ASC';
     
@@ -1164,8 +1418,15 @@ app.use('/api/v2', apiRoutes);
     const field = validFields.includes(sortField) ? sortField : 'ordem';
     const order = sortOrder.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
 
-    const data = await db.query(`SELECT * FROM setores ORDER BY ${field} ${order}, nome_setor ASC LIMIT ? OFFSET ?`, [limit, offset]);
-    const total = await db.queryOne("SELECT COUNT(*) as count FROM setores");
+    let sql = `SELECT * FROM setores WHERE 1=1`;
+    const params: any[] = [];
+    if (obra_id) { sql += " AND obra_id = ?"; params.push(obra_id); }
+
+    const total = await db.queryOne(`SELECT COUNT(*) as count FROM (${sql}) as t`, params);
+    sql += ` ORDER BY ${field} ${order}, nome_setor ASC LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
+
+    const data = await db.query(sql, params);
     res.json({ data, total: parseInt(total.count), page, limit });
   });
   app.get("/api/setores/:id", async (req, res) => {
@@ -1174,21 +1435,47 @@ app.use('/api/v2', apiRoutes);
     else res.status(404).json({ error: "Setor não encontrado" });
   });
   app.post("/api/setores", requireAdmin, async (req, res) => {
-    const { nome_setor, descricao } = req.body;
-    const info = await db.run("INSERT INTO setores (nome_setor, descricao) VALUES (?, ?)", [nome_setor, descricao]);
+    const { obra_id, nome_setor, tipo, descricao } = req.body;
+    const info = await db.run("INSERT INTO setores (obra_id, nome_setor, tipo, descricao) VALUES (?, ?, ?, ?)", [obra_id, nome_setor, tipo || 'Torre', descricao]);
     res.json({ id: info.lastInsertRowid });
   });
   app.put("/api/setores/:id", requireAdmin, async (req, res) => {
-    const { nome_setor, descricao } = req.body;
-    await db.run("UPDATE setores SET nome_setor = ?, descricao = ? WHERE id = ?", [nome_setor, descricao, req.params.id]);
+    const { obra_id, nome_setor, tipo, descricao } = req.body;
+    await db.run("UPDATE setores SET obra_id = ?, nome_setor = ?, tipo = ?, descricao = ? WHERE id = ?", [obra_id, nome_setor, tipo, descricao, req.params.id]);
     res.json({ success: true });
   });
   app.delete("/api/setores/:id", requireAdmin, async (req, res) => {
     try {
-      await db.run("DELETE FROM setores WHERE id = ?", [req.params.id]);
+      const { id } = req.params;
+      await db.run(`DELETE FROM servicos_ambiente WHERE ambiente_id IN (
+        SELECT id FROM ambientes WHERE unidade_id IN (
+          SELECT id FROM unidades WHERE categoria_id IN (
+            SELECT id FROM categorias WHERE local_id IN (
+              SELECT id FROM locais WHERE setor_id = ?
+            )
+          )
+        )
+      )`, [id]);
+      await db.run(`DELETE FROM ambientes WHERE unidade_id IN (
+        SELECT id FROM unidades WHERE categoria_id IN (
+          SELECT id FROM categorias WHERE local_id IN (
+            SELECT id FROM locais WHERE setor_id = ?
+          )
+        )
+      )`, [id]);
+      await db.run(`DELETE FROM unidades WHERE categoria_id IN (
+        SELECT id FROM categorias WHERE local_id IN (
+          SELECT id FROM locais WHERE setor_id = ?
+        )
+      )`, [id]);
+      await db.run(`DELETE FROM categorias WHERE local_id IN (
+        SELECT id FROM locais WHERE setor_id = ?
+      )`, [id]);
+      await db.run("DELETE FROM locais WHERE setor_id = ?", [id]);
+      await db.run("DELETE FROM setores WHERE id = ?", [id]);
       res.json({ success: true });
     } catch (error: any) {
-      res.status(400).json({ error: "Não é possível excluir este setor pois existem pavimentos vinculados a ele." });
+      res.status(500).json({ error: "Erro ao excluir setor: " + error.message });
     }
   });
 
@@ -1198,14 +1485,79 @@ app.use('/api/v2', apiRoutes);
   });
 
   app.post("/api/tipos-ambiente", requireAdmin, async (req, res) => {
-    const { nome, descricao, icone } = req.body;
-    const info = await db.run("INSERT INTO tipos_ambiente (nome, descricao, icone) VALUES (?, ?, ?)", [nome, descricao, icone]);
+    const { 
+      nome, descricao, icone,
+      perimetro, altura, descontos_levante, descontos_face, area_piso, area_teto,
+      tem_portas, portas_json, tem_janelas, janelas_json,
+      tem_bancada, bancada_json, tem_divisoria, divisoria_json,
+      tem_soleira, soleira_json, tem_divbox, divbox_json,
+      tem_hidrossanitario, hidrossanitario_json,
+      tem_eletrico, eletrico_json,
+      tem_comunicacao, comunicacao_json,
+      tem_guarda_corpo, tem_ar_condicionado
+    } = req.body;
+    const info = await db.run(`
+      INSERT INTO tipos_ambiente (
+        nome, descricao, icone,
+        perimetro, altura, descontos_levante, descontos_face, area_piso, area_teto,
+        tem_portas, portas_json, tem_janelas, janelas_json,
+        tem_bancada, bancada_json, tem_divisoria, divisoria_json,
+        tem_soleira, soleira_json, tem_divbox, divbox_json,
+        tem_hidrossanitario, hidrossanitario_json,
+        tem_eletrico, eletrico_json,
+        tem_comunicacao, comunicacao_json,
+        tem_guarda_corpo, tem_ar_condicionado
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+      [
+        nome, descricao, icone,
+        perimetro || 0, altura || 0, descontos_levante || 0, descontos_face || 0, area_piso || 0, area_teto || 0,
+        tem_portas ? 1 : 0, portas_json, tem_janelas ? 1 : 0, janelas_json,
+        tem_bancada ? 1 : 0, bancada_json, tem_divisoria ? 1 : 0, divisoria_json,
+        tem_soleira ? 1 : 0, soleira_json, tem_divbox ? 1 : 0, divbox_json,
+        tem_hidrossanitario ? 1 : 0, hidrossanitario_json,
+        tem_eletrico ? 1 : 0, eletrico_json,
+        tem_comunicacao ? 1 : 0, comunicacao_json,
+        tem_guarda_corpo ? 1 : 0, tem_ar_condicionado ? 1 : 0
+      ]);
     res.json({ id: info.lastInsertRowid });
   });
 
   app.put("/api/tipos-ambiente/:id", requireAdmin, async (req, res) => {
-    const { nome, descricao, icone } = req.body;
-    await db.run("UPDATE tipos_ambiente SET nome = ?, descricao = ?, icone = ? WHERE id = ?", [nome, descricao, icone, req.params.id]);
+    const { 
+      nome, descricao, icone,
+      perimetro, altura, descontos_levante, descontos_face, area_piso, area_teto,
+      tem_portas, portas_json, tem_janelas, janelas_json,
+      tem_bancada, bancada_json, tem_divisoria, divisoria_json,
+      tem_soleira, soleira_json, tem_divbox, divbox_json,
+      tem_hidrossanitario, hidrossanitario_json,
+      tem_eletrico, eletrico_json,
+      tem_comunicacao, comunicacao_json,
+      tem_guarda_corpo, tem_ar_condicionado
+    } = req.body;
+    await db.run(`
+      UPDATE tipos_ambiente SET 
+        nome = ?, descricao = ?, icone = ?,
+        perimetro = ?, altura = ?, descontos_levante = ?, descontos_face = ?, area_piso = ?, area_teto = ?,
+        tem_portas = ?, portas_json = ?, tem_janelas = ?, janelas_json = ?,
+        tem_bancada = ?, bancada_json = ?, tem_divisoria = ?, divisoria_json = ?,
+        tem_soleira = ?, soleira_json = ?, tem_divbox = ?, divbox_json = ?,
+        tem_hidrossanitario = ?, hidrossanitario_json = ?,
+        tem_eletrico = ?, eletrico_json = ?,
+        tem_comunicacao = ?, comunicacao_json = ?,
+        tem_guarda_corpo = ?, tem_ar_condicionado = ?
+      WHERE id = ?`, 
+      [
+        nome, descricao, icone,
+        perimetro || 0, altura || 0, descontos_levante || 0, descontos_face || 0, area_piso || 0, area_teto || 0,
+        tem_portas ? 1 : 0, portas_json, tem_janelas ? 1 : 0, janelas_json,
+        tem_bancada ? 1 : 0, bancada_json, tem_divisoria ? 1 : 0, divisoria_json,
+        tem_soleira ? 1 : 0, soleira_json, tem_divbox ? 1 : 0, divbox_json,
+        tem_hidrossanitario ? 1 : 0, hidrossanitario_json,
+        tem_eletrico ? 1 : 0, eletrico_json,
+        tem_comunicacao ? 1 : 0, comunicacao_json,
+        tem_guarda_corpo ? 1 : 0, tem_ar_condicionado ? 1 : 0,
+        req.params.id
+      ]);
     res.json({ success: true });
   });
 
@@ -1249,24 +1601,76 @@ app.use('/api/v2', apiRoutes);
   });
   app.delete("/api/pavimentos/:id", requireAdmin, async (req, res) => {
     try {
-      await db.run("DELETE FROM pavimentos WHERE id = ?", [req.params.id]);
+      const { id } = req.params;
+      // Cascading delete: Environments -> Floor
+      await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id IN (SELECT id FROM ambientes WHERE pavimento_id = ?)", [id]);
+      await db.run("DELETE FROM ambientes WHERE pavimento_id = ?", [id]);
+      await db.run("DELETE FROM unidades WHERE pavimento_id = ?", [id]);
+      await db.run("DELETE FROM pavimentos WHERE id = ?", [id]);
       res.json({ success: true });
     } catch (error: any) {
-      res.status(400).json({ error: "Não é possível excluir este pavimento pois existem ambientes vinculados a ele." });
+      res.status(500).json({ error: "Erro ao excluir pavimento e seus dependentes: " + error.message });
+    }
+  });
+
+  app.get("/api/unidades", async (req, res) => {
+    const { pavimento_id } = req.query;
+    const { page, limit, offset } = getPagination(req);
+    
+    let sql = "SELECT * FROM unidades";
+    const params: any[] = [];
+    if (pavimento_id) { sql += " WHERE pavimento_id = ?"; params.push(pavimento_id); }
+    
+    const total = await db.queryOne(`SELECT COUNT(*) as count FROM (${sql}) as t`, params);
+    sql += ` ORDER BY ordem ASC, nome_unidade ASC LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
+    
+    const data = await db.query(sql, params);
+    res.json({ data, total: parseInt(total.count), page, limit });
+  });
+
+  app.get("/api/unidades/:id", async (req, res) => {
+    const data = await db.queryOne("SELECT * FROM unidades WHERE id = ?", [req.params.id]);
+    if (data) res.json(data);
+    else res.status(404).json({ error: "Unidade não encontrada" });
+  });
+
+  app.post("/api/unidades", requireAdmin, async (req, res) => {
+    const { pavimento_id, nome_unidade, descricao } = req.body;
+    const info = await db.run("INSERT INTO unidades (pavimento_id, nome_unidade, descricao) VALUES (?, ?, ?)", [pavimento_id, nome_unidade, descricao]);
+    res.json({ id: info.lastInsertRowid });
+  });
+
+  app.put("/api/unidades/:id", requireAdmin, async (req, res) => {
+    const { pavimento_id, nome_unidade, descricao } = req.body;
+    await db.run("UPDATE unidades SET pavimento_id = ?, nome_unidade = ?, descricao = ? WHERE id = ?", [pavimento_id, nome_unidade, descricao, req.params.id]);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/unidades/:id", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id IN (SELECT id FROM ambientes WHERE unidade_id = ?)", [id]);
+      await db.run("DELETE FROM ambientes WHERE unidade_id = ?", [id]);
+      await db.run("DELETE FROM unidades WHERE id = ?", [id]);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Erro ao excluir unidade: " + error.message });
     }
   });
 
   app.get("/api/ambientes", async (req, res) => {
-    const { pavimento_id, setor_id, sortField, sortOrder } = req.query;
+    const { pavimento_id, setor_id, unidade_id, sortField, sortOrder } = req.query;
     const { page, limit, offset } = getPagination(req);
     
     const field = (sortField === 'nome_ambiente' || sortField === 'ordem') ? `a.${sortField}` : 'a.ordem';
     const order = sortOrder === 'DESC' ? 'DESC' : 'ASC';
 
-    let sql = "SELECT a.*, s.nome_setor, p.nome_pavimento FROM ambientes a JOIN setores s ON a.setor_id = s.id JOIN pavimentos p ON a.pavimento_id = p.id WHERE 1=1";
+    let sql = "SELECT a.*, s.nome_setor, p.nome_pavimento, u.nome_unidade FROM ambientes a JOIN setores s ON a.setor_id = s.id JOIN pavimentos p ON a.pavimento_id = p.id LEFT JOIN unidades u ON a.unidade_id = u.id WHERE 1=1";
     const params: any[] = [];
     if (pavimento_id) { sql += " AND a.pavimento_id = ?"; params.push(pavimento_id); }
     if (setor_id) { sql += " AND a.setor_id = ?"; params.push(setor_id); }
+    if (unidade_id) { sql += " AND a.unidade_id = ?"; params.push(unidade_id); }
     
     const total = await db.queryOne(`SELECT COUNT(*) as count FROM (${sql}) as t`, params);
     sql += ` ORDER BY ${field} ${order}, a.nome_ambiente ASC LIMIT ? OFFSET ?`;
@@ -1276,74 +1680,18 @@ app.use('/api/v2', apiRoutes);
     res.json({ data, total: parseInt(total.count), page, limit });
   });
   app.get("/api/ambientes/:id", async (req, res) => {
-    const data = await db.queryOne("SELECT a.*, s.nome_setor, p.nome_pavimento FROM ambientes a JOIN setores s ON a.setor_id = s.id JOIN pavimentos p ON a.pavimento_id = p.id WHERE a.id = ?", [req.params.id]);
+    const data = await db.queryOne("SELECT a.*, s.nome_setor, p.nome_pavimento, u.nome_unidade FROM ambientes a JOIN setores s ON a.setor_id = s.id JOIN pavimentos p ON a.pavimento_id = p.id LEFT JOIN unidades u ON a.unidade_id = u.id WHERE a.id = ?", [req.params.id]);
     if (data) res.json(data);
     else res.status(404).json({ error: "Ambiente não encontrado" });
   });
-  app.post("/api/ambientes", requireAdmin, async (req, res) => {
-    const { setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao, servicos_ids } = req.body;
-    const info = await db.run("INSERT INTO ambientes (setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-      [setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao]);
-    
-    const ambienteId = info.lastInsertRowid;
-
-    if (servicos_ids && Array.isArray(servicos_ids)) {
-      for (const srvId of servicos_ids) {
-        const srvDef = await db.queryOne("SELECT * FROM parametros_servico_itens WHERE id = ?", [srvId]);
-        if (srvDef) {
-          await db.run("INSERT INTO servicos_ambiente (ambiente_id, nome_servico, unidade_medida, quantidade_total_prevista, quantidade_restante, valor_parametro, produtividade) VALUES (?, ?, ?, ?, ?, ?, ?)", 
-            [ambienteId, srvDef.nome, srvDef.unidade_medida, area_total || 0, area_total || 0, srvDef.valor_parametro, srvDef.quantidade_produtividade]);
-        }
-      }
-    }
-
-    res.json({ id: ambienteId });
-  });
-  app.put("/api/ambientes/:id", requireAdmin, async (req, res) => {
-    const { setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao, servicos_ids } = req.body;
-    await db.run("UPDATE ambientes SET setor_id = ?, pavimento_id = ?, nome_ambiente = ?, tipo_ambiente = ?, area_total = ?, piso = ?, parede = ?, teto = ?, esquadrias = ?, metais = ?, loucas = ?, descricao = ? WHERE id = ?", 
-      [setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao, req.params.id]);
-    
-    if (servicos_ids && Array.isArray(servicos_ids)) {
-      // Get current services
-      const currentServices = await db.query("SELECT id, nome_servico, quantidade_executada FROM servicos_ambiente WHERE ambiente_id = ?", [req.params.id]);
-      
-      // Get new service definitions
-      const newServiceDefs = [];
-      for (const srvId of servicos_ids) {
-        const srvDef = await db.queryOne("SELECT * FROM parametros_servico_itens WHERE id = ?", [srvId]);
-        if (srvDef) newServiceDefs.push(srvDef);
-      }
-
-      const newServiceNames = newServiceDefs.map(s => s.nome);
-
-      // Remove services not in the new list (only if not executed)
-      for (const current of currentServices) {
-        if (!newServiceNames.includes(current.nome_servico)) {
-          if (current.quantidade_executada === 0) {
-            await db.run("DELETE FROM servicos_ambiente WHERE id = ?", [current.id]);
-          }
-        }
-      }
-
-      // Add new services
-      for (const srvDef of newServiceDefs) {
-        const exists = currentServices.find(s => s.nome_servico === srvDef.nome);
-        if (!exists) {
-          await db.run("INSERT INTO servicos_ambiente (ambiente_id, nome_servico, unidade_medida, quantidade_total_prevista, quantidade_restante, valor_parametro, produtividade) VALUES (?, ?, ?, ?, ?, ?, ?)", 
-            [req.params.id, srvDef.nome, srvDef.unidade_medida, area_total || 0, area_total || 0, srvDef.valor_parametro, srvDef.quantidade_produtividade]);
-        }
-      }
-    }
-
-    res.json({ success: true });
-  });
   app.delete("/api/ambientes/:id", requireAdmin, async (req, res) => {
     try {
-      await db.run("DELETE FROM ambientes WHERE id = ?", [req.params.id]);
+      const { id } = req.params;
+      await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id = ?", [id]);
+      await db.run("DELETE FROM ambientes WHERE id = ?", [id]);
       res.json({ success: true });
     } catch (error: any) {
-      res.status(400).json({ error: "Não é possível excluir este ambiente pois existem serviços vinculados a ele." });
+      res.status(500).json({ error: "Erro ao excluir ambiente: " + error.message });
     }
   });
 
@@ -1352,8 +1700,10 @@ app.use('/api/v2', apiRoutes);
     const { orders } = req.body; // Array of { id, ordem }
     
     const tableMap: Record<string, string> = {
+      obra: 'obras',
       sector: 'setores',
       floor: 'pavimentos',
+      unit: 'unidades',
       env: 'ambientes'
     };
     
@@ -1367,6 +1717,59 @@ app.use('/api/v2', apiRoutes);
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Erro ao reordenar" });
+    }
+  });
+
+  app.post("/api/bulk-delete/:type", requireAdmin, async (req, res) => {
+    const { type } = req.params;
+    const { ids } = req.body; // Array of IDs
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "Nenhum ID fornecido" });
+    }
+
+    try {
+      if (type === 'obra') {
+        for (const id of ids) {
+          await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id IN (SELECT id FROM ambientes WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?))", [id]);
+          await db.run("DELETE FROM ambientes WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?)", [id]);
+          await db.run("DELETE FROM unidades WHERE pavimento_id IN (SELECT id FROM pavimentos WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?))", [id]);
+          await db.run("DELETE FROM pavimentos WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?)", [id]);
+          await db.run("DELETE FROM setores WHERE obra_id = ?", [id]);
+          await db.run("DELETE FROM obras WHERE id = ?", [id]);
+        }
+      } else if (type === 'sector') {
+        for (const id of ids) {
+          await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id IN (SELECT id FROM ambientes WHERE setor_id = ?)", [id]);
+          await db.run("DELETE FROM ambientes WHERE setor_id = ?", [id]);
+          await db.run("DELETE FROM unidades WHERE pavimento_id IN (SELECT id FROM pavimentos WHERE setor_id = ?)", [id]);
+          await db.run("DELETE FROM pavimentos WHERE setor_id = ?", [id]);
+          await db.run("DELETE FROM setores WHERE id = ?", [id]);
+        }
+      } else if (type === 'floor') {
+        for (const id of ids) {
+          await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id IN (SELECT id FROM ambientes WHERE pavimento_id = ?)", [id]);
+          await db.run("DELETE FROM ambientes WHERE pavimento_id = ?", [id]);
+          await db.run("DELETE FROM unidades WHERE pavimento_id = ?", [id]);
+          await db.run("DELETE FROM pavimentos WHERE id = ?", [id]);
+        }
+      } else if (type === 'unit') {
+        for (const id of ids) {
+          await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id IN (SELECT id FROM ambientes WHERE unidade_id = ?)", [id]);
+          await db.run("DELETE FROM ambientes WHERE unidade_id = ?", [id]);
+          await db.run("DELETE FROM unidades WHERE id = ?", [id]);
+        }
+      } else if (type === 'env') {
+        for (const id of ids) {
+          await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id = ?", [id]);
+          await db.run("DELETE FROM ambientes WHERE id = ?", [id]);
+        }
+      } else {
+        return res.status(400).json({ error: "Tipo inválido" });
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Erro na exclusão em massa: " + error.message });
     }
   });
 
@@ -1903,14 +2306,27 @@ app.use('/api/v2', apiRoutes);
   });
 
   app.post("/api/checklists", async (req, res) => {
-    const { task, category } = req.body;
-    const info = await db.run("INSERT INTO checklists (task, category) VALUES (?, ?)", [task, category]);
+    const { task, category, responsible, due_date, priority } = req.body;
+    const info = await db.run(
+      "INSERT INTO checklists (task, category, responsible, due_date, priority) VALUES (?, ?, ?, ?, ?)", 
+      [task, category || 'Geral', responsible, due_date, priority || 'Média']
+    );
     res.json({ id: info.lastInsertRowid });
   });
 
   app.put("/api/checklists/:id", async (req, res) => {
-    const { status } = req.body;
-    await db.run("UPDATE checklists SET status = ? WHERE id = ?", [status, req.params.id]);
+    const { status, task, category, responsible, due_date, priority } = req.body;
+    
+    if (status !== undefined && Object.keys(req.body).length === 1) {
+      // Legacy support for just toggling status
+      await db.run("UPDATE checklists SET status = ? WHERE id = ?", [status, req.params.id]);
+    } else {
+      // Full update
+      await db.run(
+        "UPDATE checklists SET task = ?, category = ?, responsible = ?, due_date = ?, priority = ?, status = ? WHERE id = ?",
+        [task, category, responsible, due_date, priority, status, req.params.id]
+      );
+    }
     res.json({ success: true });
   });
 
