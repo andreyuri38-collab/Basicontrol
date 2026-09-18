@@ -6,8 +6,9 @@ interface LoginProps {
 }
 
 export default function Login({ onLogin }: LoginProps) {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState(localStorage.getItem('rememberedUsername') || '');
+  const [password, setPassword] = useState(localStorage.getItem('rememberedPassword') || '');
+  const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('rememberedUsername'));
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -25,6 +26,17 @@ export default function Login({ onLogin }: LoginProps) {
 
       if (response.ok) {
         const user = await response.json();
+        
+        // SECURITY WARNING: Storing passwords in localStorage is insecure. 
+        // This is implemented as requested by the user.
+        if (rememberMe) {
+          localStorage.setItem('rememberedUsername', username);
+          localStorage.setItem('rememberedPassword', password);
+        } else {
+          localStorage.removeItem('rememberedUsername');
+          localStorage.removeItem('rememberedPassword');
+        }
+        
         onLogin(user);
       } else {
         const data = await response.json();
@@ -84,6 +96,19 @@ export default function Login({ onLogin }: LoginProps) {
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </div>
+            </div>
+
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id="rememberMe"
+                className="w-4 h-4 text-emerald-600 border-slate-300 rounded focus:ring-emerald-500"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+              />
+              <label htmlFor="rememberMe" className="ml-2 text-sm text-slate-600">
+                Lembrar senha
+              </label>
             </div>
 
             <button

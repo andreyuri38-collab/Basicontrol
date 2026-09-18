@@ -1,0 +1,206 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Perfil de usuário interno do Nivelar Obras (Admin ou Campo)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 120 },
+        "email": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "enum": ["admin", "campo"] },
+        "assignedFrenteIds": { "type": "array" },
+        "assignedWorkIds": { "type": "array" },
+        "phone": { "type": "string", "maxLength": 30 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "role"]
+    },
+    "Work": {
+      "title": "Work",
+      "description": "Cadastro da obra/empreendimento e contratante",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 150 },
+        "clientName": { "type": "string", "maxLength": 150 },
+        "clientPhone": { "type": "string", "maxLength": 30 },
+        "clientEmail": { "type": "string", "maxLength": 120 },
+        "address": { "type": "string", "maxLength": 250 },
+        "totalAreaM2": { "type": "number" },
+        "contractValue": { "type": "number" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["orcamento", "em_andamento", "concluida", "cancelada"] },
+        "notes": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["id", "name", "clientName", "totalAreaM2", "status"]
+    },
+    "Frente": {
+      "title": "Frente",
+      "description": "Frente de trabalho de uma obra (bloco, torre, pavimento)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 120 },
+        "areaM2": { "type": "number" },
+        "targetProductivityM2PerDay": { "type": "number" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["nao_iniciada", "em_andamento", "concluida"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "workId", "name", "areaM2", "targetProductivityM2PerDay", "status"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Funcionário da equipe operacional ou de engenharia",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "maxLength": 60 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "hireDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["ativo", "inativo"] },
+        "assignedFrenteIds": { "type": "array" },
+        "accessEmail": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "role", "status"]
+    },
+    "Equipment": {
+      "title": "Equipment",
+      "description": "Cadastro e inventário de equipamentos próprios, locados e terceirizados",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 150 },
+        "code": { "type": "string", "maxLength": 50 },
+        "category": { "type": "string", "enum": ["bombeamento", "misturador", "gerador", "laser_nivel", "veiculo", "outro"] },
+        "ownership": { "type": "string", "enum": ["proprio", "locado", "terceirizado"] },
+        "status": { "type": "string", "enum": ["disponivel", "em_uso", "manutencao", "inativo"] },
+        "supplierOrRentalCompany": { "type": "string", "maxLength": 150 },
+        "rentalDailyCost": { "type": "number" },
+        "costResponsibilityDefault": { "type": "string", "enum": ["contratado", "contratante"] },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "category", "ownership", "status"]
+    },
+    "Schedule": {
+      "title": "Schedule",
+      "description": "Programação diária de atividades e equipe por frente",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "workId": { "type": "string" },
+        "frenteId": { "type": "string" },
+        "activity": { "type": "string", "maxLength": 150 },
+        "assignedEmployeeIds": { "type": "array" },
+        "pumpingEquipmentType": { "type": "string", "enum": ["proprio", "terceirizado", "nenhum"] },
+        "pumpingEquipmentId": { "type": "string" },
+        "pumpingCostResponsibility": { "type": "string", "enum": ["contratado", "contratante"] },
+        "pumpingSupplier": { "type": "string", "maxLength": 150 },
+        "pumpingCost": { "type": "number" },
+        "assignedEquipmentIds": { "type": "array" },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["id", "date", "workId", "frenteId", "activity"]
+    },
+    "ProductivityLog": {
+      "title": "ProductivityLog",
+      "description": "Apontamento diário de produtividade executada por frente",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "workId": { "type": "string" },
+        "frenteId": { "type": "string" },
+        "m2Executed": { "type": "number" },
+        "presentEmployeeIds": { "type": "array" },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "photoUrl": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["id", "date", "workId", "frenteId", "m2Executed"]
+    },
+    "FinancialEntry": {
+      "title": "FinancialEntry",
+      "description": "Lançamento financeiro a pagar ou a receber",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["receber", "pagar"] },
+        "workId": { "type": "string" },
+        "category": { "type": "string", "maxLength": 80 },
+        "description": { "type": "string", "maxLength": 200 },
+        "amount": { "type": "number" },
+        "dueDate": { "type": "string" },
+        "paymentDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["pendente", "recebido", "pago", "atrasado"] },
+        "partyName": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["id", "type", "description", "amount", "dueDate", "status"]
+    },
+    "CompanySettings": {
+      "title": "CompanySettings",
+      "description": "Configurações gerais da empresa Nivelar Obras",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "defaultProductivityM2PerDay": { "type": "number" },
+        "jobRoles": { "type": "array" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "defaultProductivityM2PerDay"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Perfis de usuários com controle de perfil (Admin ou Campo)"
+    },
+    "/works/{workId}": {
+      "schema": "Work",
+      "description": "Cadastro das obras"
+    },
+    "/works/{workId}/frentes/{frenteId}": {
+      "schema": "Frente",
+      "description": "Frentes de trabalho de cada obra"
+    },
+    "/employees/{employeeId}": {
+      "schema": "Employee",
+      "description": "Cadastro de funcionários"
+    },
+    "/equipments/{equipmentId}": {
+      "schema": "Equipment",
+      "description": "Cadastro e controle de equipamentos próprios, locados e terceirizados"
+    },
+    "/schedules/{scheduleId}": {
+      "schema": "Schedule",
+      "description": "Programação diária de trabalho"
+    },
+    "/productivity/{logId}": {
+      "schema": "ProductivityLog",
+      "description": "Apontamentos diários de produtividade por frente"
+    },
+    "/financial/{financialId}": {
+      "schema": "FinancialEntry",
+      "description": "Controle de pagamentos e recebimentos (somente Admin)"
+    },
+    "/settings/{settingsId}": {
+      "schema": "CompanySettings",
+      "description": "Configurações gerais"
+    }
+  }
+}

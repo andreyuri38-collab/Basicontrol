@@ -1,7 +1,10 @@
 {
-  "name": "CONTROLE DE OBRA",
-  "description": "Sistema Inteligente de Gestão de Obra Pública para Engenharia Civil",
+  "name": "Nivelar Obras",
+  "description": "Sistema de Gestão Operacional de Contrapiso Autonivelante",
   "requestFramePermissions": [
     "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
 }

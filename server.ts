@@ -14,8 +14,8 @@ import { Readable } from "stream";
 import { parse, isValid, format, addDays } from "date-fns";
 import apiRoutes from './backend/routes/index.ts';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const _filename = typeof __filename !== 'undefined' ? __filename : (import.meta && import.meta.url ? fileURLToPath(import.meta.url) : '');
+const _dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(_filename);
 
 // Database Configuration
 let DATABASE_URL = process.env.DATABASE_URL;
@@ -30,43 +30,49 @@ let sqliteDb: any = null;
 let pgPool: Pool | null = null;
 let dbStatus = "SQLite (Local/Temporário)";
 let effectivePostgres = false;
+let isPostgres = false;
 
-if (isPostgresAttempt) {
-  pgPool = new PoolClass({
-    connectionString: DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-    connectionTimeoutMillis: 10000,
-    idleTimeoutMillis: 30000,
-    max: 10
-  });
-  
-  try {
-    const client = await pgPool.connect();
-    console.log("✅ DATABASE: PostgreSQL (Supabase) conectado com sucesso!");
-    dbStatus = "PostgreSQL (Supabase/Persistente)";
-    effectivePostgres = true;
-    client.release();
-  } catch (err: any) {
-    console.error("❌ ERRO CRÍTICO NO POSTGRESQL:", err.message);
+async function connectToDatabase() {
+  if (isPostgresAttempt) {
+    pgPool = new PoolClass({
+      connectionString: DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+      connectionTimeoutMillis: 10000,
+      idleTimeoutMillis: 30000,
+      max: 10
+    });
     
-    if (err.message.includes('ENETUNREACH') || err.message.includes('::')) {
-      console.log("⚠️ DETECTADO ERRO DE REDE (IPv6).");
-      console.log("💡 DICA: O Render não suporta IPv6 nativamente. No Supabase, use a URL do 'Connection Pooler' (Porta 6543) em vez da conexão direta (5432).");
-    } else {
-      console.log("⚠️ DATABASE_URL encontrada, mas a conexão falhou. Verifique a senha no Render.");
+    try {
+      const client = await pgPool.connect();
+      console.log("✅ DATABASE: PostgreSQL (Supabase) conectado com sucesso!");
+      dbStatus = "PostgreSQL (Supabase/Persistente)";
+      effectivePostgres = true;
+      isPostgres = true;
+      client.release();
+    } catch (err: any) {
+      console.error("❌ ERRO CRÍTICO NO POSTGRESQL:", err.message);
+      
+      if (err.message.includes('ENETUNREACH') || err.message.includes('::')) {
+        console.log("⚠️ DETECTADO ERRO DE REDE (IPv6).");
+        console.log("💡 DICA: O Render não suporta IPv6 nativamente. No Supabase, use a URL do 'Connection Pooler' (Porta 6543) in vez da conexão direta (5432).");
+      } else {
+        console.log("⚠️ DATABASE_URL encontrada, mas a conexão falhou. Verifique a senha no Render.");
+      }
+      
+      dbStatus = "Erro de Rede/Senha (Verificar DATABASE_URL)";
+      effectivePostgres = false;
     }
-    
-    dbStatus = "Erro de Rede/Senha (Verificar DATABASE_URL)";
-    effectivePostgres = false;
   }
-}
 
-const isPostgres = effectivePostgres; // Alias for backward compatibility in the rest of the file
-
-if (!effectivePostgres) {
-  sqliteDb = new Database("obra_control.db");
-  if (!isPostgresAttempt) {
-    console.log("ℹ️ DATABASE: Usando SQLite (Local). Configure DATABASE_URL no Render para persistência.");
+  if (!effectivePostgres) {
+    try {
+      sqliteDb = new Database("obra_control.db");
+      if (!isPostgresAttempt) {
+        console.log("ℹ️ DATABASE: Usando SQLite (Local). Configure DATABASE_URL no Render para persistência.");
+      }
+    } catch (err) {
+      console.error("❌ FAILED TO LOAD SQLITE:", err);
+    }
   }
 }
 
@@ -94,15 +100,20 @@ const db = {
     }
   },
   async query(sql: string, params: any[] = []) {
-    const sanitizedParams = params.map(p => (p === "null" || (typeof p === "number" && isNaN(p))) ? null : p);
-    if (effectivePostgres) {
-      // Convert ? to $1, $2, etc for Postgres
-      let count = 0;
-      const pgSql = sql.replace(/\?/g, () => `$${++count}`);
-      const result = await pgPool!.query(pgSql, sanitizedParams);
-      return result.rows;
-    } else {
-      return sqliteDb.prepare(sql).all(...sanitizedParams);
+    try {
+      const sanitizedParams = params.map(p => (p === undefined || p === "null" || (typeof p === "number" && isNaN(p))) ? null : p);
+      if (effectivePostgres) {
+        // Convert ? to $1, $2, etc for Postgres
+        let count = 0;
+        const pgSql = sql.replace(/\?/g, () => `$${++count}`);
+        const result = await pgPool!.query(pgSql, sanitizedParams);
+        return result.rows;
+      } else {
+        return sqliteDb.prepare(sql).all(...sanitizedParams);
+      }
+    } catch (error) {
+      console.error(`❌ DATABASE QUERY ERROR: ${sql}`, error);
+      throw error;
     }
   },
   async queryOne(sql: string, params: any[] = []) {
@@ -110,18 +121,23 @@ const db = {
     return rows[0] || null;
   },
   async run(sql: string, params: any[] = []) {
-    const sanitizedParams = params.map(p => (p === "null" || (typeof p === "number" && isNaN(p))) ? null : p);
-    if (effectivePostgres) {
-      let count = 0;
-      let pgSql = sql.replace(/\?/g, () => `$${++count}`);
-      if (pgSql.trim().toUpperCase().startsWith("INSERT") && !pgSql.toUpperCase().includes("RETURNING")) {
-        pgSql += " RETURNING id";
+    try {
+      const sanitizedParams = params.map(p => (p === undefined || p === "null" || (typeof p === "number" && isNaN(p))) ? null : p);
+      if (effectivePostgres) {
+        let count = 0;
+        let pgSql = sql.replace(/\?/g, () => `$${++count}`);
+        if (pgSql.trim().toUpperCase().startsWith("INSERT") && !pgSql.toUpperCase().includes("RETURNING")) {
+          pgSql += " RETURNING id";
+        }
+        const result = await pgPool!.query(pgSql, sanitizedParams);
+        return { lastInsertRowid: result.rows[0]?.id || null };
+      } else {
+        const info = sqliteDb.prepare(sql).run(...sanitizedParams);
+        return { lastInsertRowid: info.lastInsertRowid };
       }
-      const result = await pgPool!.query(pgSql, sanitizedParams);
-      return { lastInsertRowid: result.rows[0]?.id || null };
-    } else {
-      const info = sqliteDb.prepare(sql).run(...sanitizedParams);
-      return { lastInsertRowid: info.lastInsertRowid };
+    } catch (error) {
+      console.error(`❌ DATABASE RUN ERROR: ${sql}`, error);
+      throw error;
     }
   },
   // Special helper for SQLite backup which doesn't exist in PG
@@ -176,6 +192,7 @@ async function initDb() {
       name TEXT UNIQUE NOT NULL,
       salary REAL NOT NULL,
       payment_type TEXT NOT NULL DEFAULT 'monthly',
+      ordem INTEGER DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -312,9 +329,48 @@ async function initDb() {
 
     CREATE TABLE IF NOT EXISTS unidades (
       id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
-      categoria_id INTEGER REFERENCES categorias(id),
+      local_id INTEGER REFERENCES locais(id),
+      pavimento_id INTEGER REFERENCES pavimentos(id),
       nome_unidade TEXT NOT NULL,
       descricao TEXT,
+      perimetro_alvenaria REAL,
+      altura_alvenaria REAL,
+      area_alvenaria REAL,
+      descontos_alvenaria REAL,
+      area_alvenaria_total REAL,
+      area_piso REAL,
+      descontos_piso REAL,
+      area_piso_total REAL,
+      altura_contrapiso REAL,
+      revestimento_piso_json TEXT,
+      perimetro_revestimento_parede REAL,
+      altura_revestimento_parede REAL,
+      area_revestimento_parede REAL,
+      descontos_revestimento_parede REAL,
+      area_revestimento_parede_total REAL,
+      revestimento_parede_json TEXT,
+      tem_portas INTEGER DEFAULT 0,
+      portas_json TEXT,
+      tem_janelas INTEGER DEFAULT 0,
+      janelas_json TEXT,
+      tem_bancada INTEGER DEFAULT 0,
+      bancada_json TEXT,
+      tem_divisoria INTEGER DEFAULT 0,
+      divisoria_json TEXT,
+      tem_soleira INTEGER DEFAULT 0,
+      soleira_json TEXT,
+      tem_divbox INTEGER DEFAULT 0,
+      divbox_json TEXT,
+      tem_hidrossanitario INTEGER DEFAULT 0,
+      hidrossanitario_json TEXT,
+      tem_eletrico INTEGER DEFAULT 0,
+      eletrico_json TEXT,
+      tem_comunicacao INTEGER DEFAULT 0,
+      comunicacao_json TEXT,
+      tem_guarda_corpo INTEGER DEFAULT 0,
+      guarda_corpo_quantidade INTEGER,
+      tem_ar_condicionado INTEGER DEFAULT 0,
+      ar_condicionado_quantidade INTEGER,
       ordem INTEGER DEFAULT 0,
       data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -344,6 +400,7 @@ async function initDb() {
       produtividade REAL,
       produtividade_media REAL,
       unidade_tempo TEXT DEFAULT 'DIA', -- DIA, HORA
+      ordem INTEGER DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -354,7 +411,8 @@ async function initDb() {
       unidade_medida TEXT,
       quantidade_produtividade REAL,
       unidade_tempo TEXT, -- HORA, DIA
-      valor_parametro REAL
+      valor_parametro REAL,
+      ordem INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS servicos_ambiente (
@@ -379,7 +437,8 @@ async function initDb() {
       unidade_medida TEXT,
       sequencia INTEGER DEFAULT 0,
       descricao TEXT,
-      tempo_total REAL DEFAULT 0 -- Em dias
+      tempo_total REAL DEFAULT 0, -- Em dias
+      data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS atividades (
@@ -401,7 +460,8 @@ async function initDb() {
       tem_dependencia INTEGER DEFAULT 0,
       predecessora_id INTEGER REFERENCES atividades(id),
       tempo_estimado REAL DEFAULT 0,
-      unidade_tempo_estimado TEXT DEFAULT 'DIA' -- DIA, HORA
+      unidade_tempo_estimado TEXT DEFAULT 'DIA', -- DIA, HORA
+      data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS servicos_definicao (
@@ -422,7 +482,8 @@ async function initDb() {
       tipo_item TEXT, -- INSUMO, FERRAMENTA
       descricao TEXT,
       quantidade REAL,
-      unidade_medida TEXT
+      unidade_medida TEXT,
+      data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS atividade_dependencia (
@@ -501,6 +562,7 @@ async function initDb() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
+
     CREATE TABLE IF NOT EXISTS medical_certificates (
       id ${isPostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
       employee_id INTEGER NOT NULL,
@@ -515,18 +577,219 @@ async function initDb() {
 
   // Migration for existing tables
   try {
+    const hashedPassword = bcrypt.hashSync("Nara281014@", 10);
+    const existingUser = await db.queryOne("SELECT * FROM users WHERE username = ?", ["Engenheiro01"]);
+    if (!existingUser) {
+      await db.run("INSERT INTO users (username, password, role, name) VALUES (?, ?, 'admin', 'Engenheiro')", ["Engenheiro01", hashedPassword]);
+    }
+  } catch (e) { console.error("Erro ao criar usuário Engenheiro01:", e); }
+
+  try {
+    await db.exec("ALTER TABLE obras ADD COLUMN nome_obra TEXT");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE obras ALTER COLUMN nome DROP NOT NULL");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE obras ADD COLUMN descricao TEXT");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE obras ADD COLUMN ordem INTEGER DEFAULT 0");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE obras ADD COLUMN data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+  } catch (e) {}
+  try {
     await db.exec("ALTER TABLE setores ADD COLUMN ordem INTEGER DEFAULT 0");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE setores ADD COLUMN tipo TEXT DEFAULT 'Torre'");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE setores ADD COLUMN nome_setor TEXT");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE setores ADD COLUMN descricao TEXT");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE setores ADD COLUMN data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+  } catch (e) {}
+  try { await db.exec("ALTER TABLE locais ADD COLUMN ordem INTEGER DEFAULT 0"); } catch(e) {}
+  try { await db.exec("ALTER TABLE pavimentos ADD COLUMN ordem INTEGER DEFAULT 0"); } catch(e) {}
+  try { await db.exec("ALTER TABLE categorias ADD COLUMN ordem INTEGER DEFAULT 0"); } catch(e) {}
+  try { await db.exec("ALTER TABLE unidades ADD COLUMN ordem INTEGER DEFAULT 0"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN ordem INTEGER DEFAULT 0"); } catch(e) {}
+  try { await db.exec("ALTER TABLE job_roles ADD COLUMN ordem INTEGER DEFAULT 0"); } catch(e) {}
+  try { await db.exec("ALTER TABLE parametros_servico ADD COLUMN ordem INTEGER DEFAULT 0"); } catch(e) {}
+  try { await db.exec("ALTER TABLE parametros_servico_itens ADD COLUMN ordem INTEGER DEFAULT 0"); } catch(e) {}
+  try {
+    await db.exec("ALTER TABLE setores ALTER COLUMN nome DROP NOT NULL");
   } catch (e) {}
   try {
     await db.exec("ALTER TABLE pavimentos ADD COLUMN ordem INTEGER DEFAULT 0");
   } catch (e) {}
   try {
+    await db.exec("ALTER TABLE locais ADD COLUMN ordem INTEGER DEFAULT 0");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE locais ADD COLUMN nome_local TEXT");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE locais ADD COLUMN tipo TEXT DEFAULT 'Individual'");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE locais ADD COLUMN area_total REAL");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE locais ADD COLUMN piso TEXT");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE locais ADD COLUMN parede TEXT");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE locais ADD COLUMN teto TEXT");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE locais ADD COLUMN esquadrias TEXT");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE locais ADD COLUMN metais TEXT");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE locais ADD COLUMN loucas TEXT");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE locais ADD COLUMN descricao TEXT");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE locais ADD COLUMN data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE locais ALTER COLUMN nome DROP NOT NULL");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE categorias ADD COLUMN ordem INTEGER DEFAULT 0");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE unidades ADD COLUMN ordem INTEGER DEFAULT 0");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE unidades ALTER COLUMN nome DROP NOT NULL");
+  } catch (e) {}
+  try {
     await db.exec("ALTER TABLE ambientes ADD COLUMN ordem INTEGER DEFAULT 0");
+  } catch (e) {}
+  try {
+    await db.exec("ALTER TABLE ambientes ALTER COLUMN nome DROP NOT NULL");
   } catch (e) {}
 
   // Migrations
   try { await db.exec("ALTER TABLE setores ADD COLUMN obra_id INTEGER REFERENCES obras(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE pavimentos ADD COLUMN setor_id INTEGER REFERENCES setores(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE pavimentos ADD COLUMN nome_pavimento TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE pavimentos ADD COLUMN descricao TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE pavimentos ADD COLUMN data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE locais ADD COLUMN setor_id INTEGER REFERENCES setores(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE categorias ADD COLUMN local_id INTEGER REFERENCES locais(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE categorias ADD COLUMN nome_categoria TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE categorias ADD COLUMN data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE unidades ADD COLUMN categoria_id INTEGER REFERENCES categorias(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE unidades ADD COLUMN local_id INTEGER REFERENCES locais(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE unidades ADD COLUMN pavimento_id INTEGER REFERENCES pavimentos(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE unidades ADD COLUMN nome_unidade TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE unidades ADD COLUMN descricao TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE unidades ADD COLUMN data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"); } catch(e) {}
+  
+  // New columns for Unit expansion
+  const unitColumns = [
+    { name: 'perimetro_alvenaria', type: 'REAL' },
+    { name: 'altura_alvenaria', type: 'REAL' },
+    { name: 'area_alvenaria', type: 'REAL' },
+    { name: 'descontos_alvenaria', type: 'REAL' },
+    { name: 'area_alvenaria_total', type: 'REAL' },
+    { name: 'area_piso', type: 'REAL' },
+    { name: 'descontos_piso', type: 'REAL' },
+    { name: 'area_piso_total', type: 'REAL' },
+    { name: 'altura_contrapiso', type: 'REAL' },
+    { name: 'revestimento_piso_json', type: 'TEXT' },
+    { name: 'perimetro_revestimento_parede', type: 'REAL' },
+    { name: 'altura_revestimento_parede', type: 'REAL' },
+    { name: 'area_revestimento_parede', type: 'REAL' },
+    { name: 'descontos_revestimento_parede', type: 'REAL' },
+    { name: 'area_revestimento_parede_total', type: 'REAL' },
+    { name: 'revestimento_parede_json', type: 'TEXT' },
+    { name: 'tem_portas', type: 'INTEGER DEFAULT 0' },
+    { name: 'portas_json', type: 'TEXT' },
+    { name: 'tem_janelas', type: 'INTEGER DEFAULT 0' },
+    { name: 'janelas_json', type: 'TEXT' },
+    { name: 'tem_bancada', type: 'INTEGER DEFAULT 0' },
+    { name: 'bancada_json', type: 'TEXT' },
+    { name: 'tem_divisoria', type: 'INTEGER DEFAULT 0' },
+    { name: 'divisoria_json', type: 'TEXT' },
+    { name: 'tem_soleira', type: 'INTEGER DEFAULT 0' },
+    { name: 'soleira_json', type: 'TEXT' },
+    { name: 'tem_divbox', type: 'INTEGER DEFAULT 0' },
+    { name: 'divbox_json', type: 'TEXT' },
+    { name: 'tem_hidrossanitario', type: 'INTEGER DEFAULT 0' },
+    { name: 'hidrossanitario_json', type: 'TEXT' },
+    { name: 'tem_eletrico', type: 'INTEGER DEFAULT 0' },
+    { name: 'eletrico_json', type: 'TEXT' },
+    { name: 'tem_comunicacao', type: 'INTEGER DEFAULT 0' },
+    { name: 'comunicacao_json', type: 'TEXT' },
+    { name: 'tem_guarda_corpo', type: 'INTEGER DEFAULT 0' },
+    { name: 'guarda_corpo_quantidade', type: 'INTEGER' },
+    { name: 'tem_ar_condicionado', type: 'INTEGER DEFAULT 0' },
+    { name: 'ar_condicionado_quantidade', type: 'INTEGER' }
+  ];
+
+  for (const col of unitColumns) {
+    try {
+      await db.exec(`ALTER TABLE unidades ADD COLUMN ${col.name} ${col.type}`);
+    } catch (e) {
+      // Column might already exist
+    }
+  }
   try { await db.exec("ALTER TABLE ambientes ADD COLUMN unidade_id INTEGER REFERENCES unidades(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN tipo_ambiente_id INTEGER REFERENCES tipos_ambiente(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN nome_ambiente TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN tipo_ambiente TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN area_total REAL;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN loucas TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN descricao TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE ambientes ADD COLUMN data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"); } catch(e) {}
+  
+  // Servicos Ambiente expansion
+  try { await db.exec("ALTER TABLE servicos_ambiente ADD COLUMN valor_parametro REAL;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE servicos_ambiente ADD COLUMN produtividade REAL;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE servicos_ambiente ADD COLUMN data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"); } catch(e) {}
+  
+  // Atividades expansion
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN ambiente_id INTEGER REFERENCES ambientes(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN pavimento_id INTEGER REFERENCES pavimentos(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN setor_id INTEGER REFERENCES setores(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN prazo_execucao INTEGER;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN produtividade_profissional REAL;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN valor_parametro REAL;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN tipo_pagamento TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN tem_dependencia INTEGER DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN predecessora_id INTEGER REFERENCES atividades(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN tempo_estimado REAL DEFAULT 0;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN unidade_tempo_estimado TEXT DEFAULT 'DIA';"); } catch(e) {}
+  try { await db.exec("ALTER TABLE atividades ADD COLUMN data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE composicao_atividade ADD COLUMN data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE grupos_atividade ADD COLUMN data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE execucao_diaria ADD COLUMN data_execucao TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE execucao_diaria ADD COLUMN funcionario_id INTEGER REFERENCES employees(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE execucao_diaria ADD COLUMN atividade_id INTEGER REFERENCES atividades(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE execucao_diaria ADD COLUMN ambiente_id INTEGER REFERENCES ambientes(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE execucao_diaria ADD COLUMN quantidade_executada REAL;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE execucao_diaria ADD COLUMN observacoes TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE execucao_diaria ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE estoque ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE checklists ADD COLUMN obra_id INTEGER REFERENCES obras(id);"); } catch(e) {}
+  try { await db.exec("ALTER TABLE checklists ADD COLUMN nome TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE checklists ADD COLUMN descricao TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE checklists ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"); } catch(e) {}
   
   // Tipos Ambiente expansion
   try { await db.exec("ALTER TABLE tipos_ambiente ADD COLUMN perimetro REAL DEFAULT 0;"); } catch(e) {}
@@ -570,6 +833,10 @@ async function initDb() {
   try { await db.exec("ALTER TABLE employees ADD COLUMN is_registered INTEGER DEFAULT 1;"); } catch(e) {}
   try { await db.exec("ALTER TABLE employees ADD COLUMN photo TEXT;"); } catch(e) {}
   try { await db.exec("ALTER TABLE servicos_ambiente ADD COLUMN descricao TEXT;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE servicos_ambiente ADD COLUMN quantidade_restante REAL;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE servicos_ambiente ADD COLUMN valor_parametro REAL;"); } catch(e) {}
+  try { await db.exec("ALTER TABLE servicos_ambiente ADD COLUMN produtividade REAL;"); } catch(e) {}
+  
   try { await db.exec("ALTER TABLE atividades ADD COLUMN descricao TEXT;"); } catch(e) {}
   try { await db.exec("ALTER TABLE atividades ADD COLUMN quantidade_padrao REAL DEFAULT 1;"); } catch(e) {}
   try { await db.exec("ALTER TABLE atividades ADD COLUMN status TEXT DEFAULT 'Ativo';"); } catch(e) {}
@@ -621,14 +888,17 @@ async function saveGoogleTokens(tokens: any) {
 }
 
 async function startServer() {
-  await initDb();
-  await loadGoogleTokens();
-  
   const app = express();
+  const PORT = 3000;
   app.use(express.json());
 
-// Modular API Routes v2 (Prisma)
-app.use('/api/v2', apiRoutes);
+  // Health check
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok" });
+  });
+
+  // Modular API Routes v2 (Prisma)
+  app.use('/api/v2', apiRoutes);
 
   const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const userRole = req.headers['x-user-role'];
@@ -668,15 +938,26 @@ app.use('/api/v2', apiRoutes);
 
   app.post("/api/factory-reset", requireAdmin, async (req, res) => {
     try {
-      const tables = [
-        'checklists', 'estoque', 'execucao_diaria', 'atividade_dependencia', 
-        'composicao_atividade', 'atividades', 'grupos_atividade', 'servicos_ambiente', 
-        'ambientes', 'pavimentos', 'setores', 'settings', 'signatures', 
-        'documents', 'payroll', 'frequency', 'job_roles', 'employees', 'users'
-      ];
-
-      for (const table of tables) {
-        await db.exec(`DROP TABLE IF EXISTS ${table}`);
+      if (!effectivePostgres) {
+        await db.exec("PRAGMA foreign_keys = OFF");
+        
+        const tables = await db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
+        for (const table of tables) {
+          await db.exec(`DROP TABLE IF EXISTS ${table.name}`);
+        }
+        
+        await db.exec("PRAGMA foreign_keys = ON");
+      } else {
+        // Postgres approach: drop all tables in public schema
+        await db.exec(`
+          DO $$ DECLARE
+              r RECORD;
+          BEGIN
+              FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
+                  EXECUTE 'DROP TABLE IF EXISTS ' || quote_ident(r.tablename) || ' CASCADE';
+              END LOOP;
+          END $$;
+        `);
       }
 
       await initDb();
@@ -694,7 +975,7 @@ app.use('/api/v2', apiRoutes);
     try {
       oauth2Client.setCredentials(googleTokens);
       const drive = google.drive({ version: 'v3', auth: oauth2Client });
-      const tempBackupPath = path.join(__dirname, "obra_control_temp.db");
+      const tempBackupPath = path.join(_dirname, "obra_control_temp.db");
       await db.backup(tempBackupPath);
       
       const media = { mimeType: 'application/x-sqlite3', body: fs.createReadStream(tempBackupPath) };
@@ -726,13 +1007,18 @@ app.use('/api/v2', apiRoutes);
     res.json({ data: users, total: parseInt(total.count), page, limit });
   });
 
-  app.post("/api/users", requireAdmin, async (req, res) => {
-    const { username, password, role, name } = req.body;
+  app.post("/api/setup-admin-user", async (req, res) => {
     try {
+      const { username, password } = req.body;
       const hashedPassword = bcrypt.hashSync(password, 10);
-      await db.run("INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)", [username, hashedPassword, role, name]);
+      const existingUser = await db.queryOne("SELECT * FROM users WHERE username = ?", [username]);
+      if (existingUser) {
+        await db.run("UPDATE users SET password = ?, role = 'admin' WHERE username = ?", [hashedPassword, username]);
+      } else {
+        await db.run("INSERT INTO users (username, password, role, name) VALUES (?, ?, 'admin', 'Engenheiro')", [username, hashedPassword]);
+      }
       res.json({ success: true });
-    } catch (e) { res.status(400).json({ error: "Erro" }); }
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 
   app.delete("/api/users/:id", requireAdmin, async (req, res) => {
@@ -1127,7 +1413,9 @@ app.use('/api/v2', apiRoutes);
           SUM(sa.quantidade_executada) as exec,
           SUM(sa.quantidade_total_prevista) as total
         FROM setores s
-        JOIN ambientes a ON a.setor_id = s.id
+        JOIN pavimentos p ON p.setor_id = s.id
+        JOIN unidades u ON u.pavimento_id = p.id
+        JOIN ambientes a ON a.unidade_id = u.id
         JOIN servicos_ambiente sa ON sa.ambiente_id = a.id
         GROUP BY s.id, s.nome_setor
       `);
@@ -1140,10 +1428,11 @@ app.use('/api/v2', apiRoutes);
           SUM(sa.quantidade_executada) as exec,
           SUM(sa.quantidade_total_prevista) as total
         FROM ambientes a
-        JOIN pavimentos p ON a.pavimento_id = p.id
+        JOIN unidades u ON a.unidade_id = u.id
+        JOIN pavimentos p ON u.pavimento_id = p.id
         JOIN servicos_ambiente sa ON sa.ambiente_id = a.id
         GROUP BY a.id, a.nome_ambiente, p.nome_pavimento
-        ORDER BY (SUM(sa.quantidade_executada) / SUM(sa.quantidade_total_prevista)) DESC
+        ORDER BY (SUM(sa.quantidade_executada) / NULLIF(SUM(sa.quantidade_total_prevista), 0)) DESC
         LIMIT 10
       `);
 
@@ -1185,20 +1474,38 @@ app.use('/api/v2', apiRoutes);
 
   // --- NUCLEO 2: PARAMETROS CONSTRUTIVOS ---
   app.get("/api/obras", async (req, res) => {
-    const { page, limit, offset } = getPagination(req);
-    const data = await db.query(`SELECT * FROM obras ORDER BY ordem ASC, nome_obra ASC LIMIT ? OFFSET ?`, [limit, offset]);
-    const total = await db.queryOne("SELECT COUNT(*) as count FROM obras");
-    res.json({ data, total: parseInt(total.count), page, limit });
+    try {
+      const { page, limit, offset } = getPagination(req);
+      const data = await db.query(`SELECT * FROM obras ORDER BY ordem ASC, nome_obra ASC LIMIT ? OFFSET ?`, [limit, offset]);
+      const total = await db.queryOne("SELECT COUNT(*) as count FROM obras");
+      res.json({ data, total: parseInt(total.count), page, limit });
+    } catch (error: any) {
+      console.error("Erro ao buscar obras:", error);
+      res.status(500).json({ error: "Erro ao buscar obras: " + error.message });
+    }
   });
   app.get("/api/obras/:id", async (req, res) => {
-    const data = await db.queryOne("SELECT * FROM obras WHERE id = ?", [req.params.id]);
-    if (data) res.json(data);
-    else res.status(404).json({ error: "Obra não encontrada" });
+    try {
+      const data = await db.queryOne("SELECT * FROM obras WHERE id = ?", [req.params.id]);
+      if (data) res.json(data);
+      else res.status(404).json({ error: "Obra não encontrada" });
+    } catch (error: any) {
+      console.error("Erro ao buscar obra:", error);
+      res.status(500).json({ error: "Erro ao buscar obra: " + error.message });
+    }
   });
   app.post("/api/obras", requireAdmin, async (req, res) => {
-    const { nome_obra, descricao } = req.body;
-    const info = await db.run("INSERT INTO obras (nome_obra, descricao) VALUES (?, ?)", [nome_obra, descricao]);
-    res.json({ id: info.lastInsertRowid });
+    try {
+      const { nome_obra, descricao } = req.body;
+      if (!nome_obra) {
+        return res.status(400).json({ error: "O nome da obra é obrigatório." });
+      }
+      const info = await db.run("INSERT INTO obras (nome_obra, descricao) VALUES (?, ?)", [nome_obra, descricao]);
+      res.json({ id: info.lastInsertRowid });
+    } catch (error: any) {
+      console.error("Erro ao criar obra:", error);
+      res.status(500).json({ error: "Erro ao criar obra: " + error.message });
+    }
   });
   app.put("/api/obras/:id", requireAdmin, async (req, res) => {
     const { nome_obra, descricao } = req.body;
@@ -1208,44 +1515,30 @@ app.use('/api/v2', apiRoutes);
   app.delete("/api/obras/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
-      // Cascading delete: Obra -> Setores -> Locais -> Categorias -> Unidades -> Ambientes -> Servicos
-      await db.run(`DELETE FROM servicos_ambiente WHERE ambiente_id IN (
-        SELECT id FROM ambientes WHERE unidade_id IN (
-          SELECT id FROM unidades WHERE categoria_id IN (
-            SELECT id FROM categorias WHERE local_id IN (
-              SELECT id FROM locais WHERE setor_id IN (
-                SELECT id FROM setores WHERE obra_id = ?
-              )
-            )
-          )
-        )
-      )`, [id]);
-      await db.run(`DELETE FROM ambientes WHERE unidade_id IN (
-        SELECT id FROM unidades WHERE categoria_id IN (
-          SELECT id FROM categorias WHERE local_id IN (
-            SELECT id FROM locais WHERE setor_id IN (
-              SELECT id FROM setores WHERE obra_id = ?
-            )
-          )
-        )
-      )`, [id]);
-      await db.run(`DELETE FROM unidades WHERE categoria_id IN (
-        SELECT id FROM categorias WHERE local_id IN (
-          SELECT id FROM locais WHERE setor_id IN (
-            SELECT id FROM setores WHERE obra_id = ?
-          )
-        )
-      )`, [id]);
-      await db.run(`DELETE FROM categorias WHERE local_id IN (
-        SELECT id FROM locais WHERE setor_id IN (
-          SELECT id FROM setores WHERE obra_id = ?
-        )
-      )`, [id]);
-      await db.run(`DELETE FROM locais WHERE setor_id IN (
-        SELECT id FROM setores WHERE obra_id = ?
-      )`, [id]);
+      // Cascading delete: Obra -> Setores -> Locais -> Categorias -> Unidades
+      // AND Obra -> Setores -> Pavimentos -> Unidades
+      
+      // 1. Delete Unidades linked to Categorias linked to Locais linked to Setores linked to Obra
+      await db.run("DELETE FROM unidades WHERE categoria_id IN (SELECT id FROM categorias WHERE local_id IN (SELECT id FROM locais WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?)))", [id]);
+      
+      // 2. Delete Categorias linked to Locais linked to Setores linked to Obra
+      await db.run("DELETE FROM categorias WHERE local_id IN (SELECT id FROM locais WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?))", [id]);
+      
+      // 3. Delete Locais linked to Setores linked to Obra
+      await db.run("DELETE FROM locais WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?)", [id]);
+      
+      // 4. Delete Unidades linked to Pavimentos linked to Setores linked to Obra
+      await db.run("DELETE FROM unidades WHERE pavimento_id IN (SELECT id FROM pavimentos WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?))", [id]);
+      
+      // 5. Delete Pavimentos linked to Setores linked to Obra
+      await db.run("DELETE FROM pavimentos WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?)", [id]);
+      
+      // 6. Delete Setores linked to Obra
       await db.run("DELETE FROM setores WHERE obra_id = ?", [id]);
+      
+      // 7. Delete Obra
       await db.run("DELETE FROM obras WHERE id = ?", [id]);
+      
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: "Erro ao excluir obra: " + error.message });
@@ -1260,15 +1553,21 @@ app.use('/api/v2', apiRoutes);
         const newFloor = await db.run("INSERT INTO pavimentos (setor_id, nome_pavimento, descricao) VALUES (?, ?, ?)", 
           [toSectorId, floor.nome_pavimento + " (Cópia)", floor.descricao]);
         
-        const environments = await db.query("SELECT * FROM ambientes WHERE pavimento_id = ?", [floor.id]);
-        for (const env of environments) {
-          const newEnv = await db.run("INSERT INTO ambientes (setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [toSectorId, newFloor.lastInsertRowid, env.nome_ambiente, env.tipo_ambiente, env.area_total, env.piso, env.parede, env.teto, env.esquadrias, env.metais, env.loucas, env.descricao]);
-          
-          const services = await db.query("SELECT * FROM servicos_ambiente WHERE ambiente_id = ?", [env.id]);
-          for (const srv of services) {
-            await db.run("INSERT INTO servicos_ambiente (ambiente_id, nome_servico, grupo_servico, unidade_medida, quantidade_total_prevista, quantidade_executada, quantidade_restante) VALUES (?, ?, ?, ?, ?, ?, ?)",
-              [newEnv.lastInsertRowid, srv.nome_servico, srv.grupo_servico, srv.unidade_medida, srv.quantidade_total_prevista, 0, srv.quantidade_total_prevista]);
+        const units = await db.query("SELECT * FROM unidades WHERE pavimento_id = ?", [floor.id]);
+        for (const unit of units) {
+          const newUnit = await db.run("INSERT INTO unidades (categoria_id, pavimento_id, nome_unidade, descricao, ordem) VALUES (?, ?, ?, ?, ?)",
+            [unit.categoria_id, newFloor.lastInsertRowid, unit.nome_unidade, unit.descricao, unit.ordem]);
+
+          const environments = await db.query("SELECT * FROM ambientes WHERE unidade_id = ?", [unit.id]);
+          for (const env of environments) {
+            const newEnv = await db.run("INSERT INTO ambientes (unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao, ordem) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              [newUnit.lastInsertRowid, env.tipo_ambiente_id, env.nome_ambiente, env.tipo_ambiente, env.area_total, env.piso, env.parede, env.teto, env.esquadrias, env.metais, env.loucas, env.descricao, env.ordem]);
+            
+            const services = await db.query("SELECT * FROM servicos_ambiente WHERE ambiente_id = ?", [env.id]);
+            for (const srv of services) {
+              await db.run("INSERT INTO servicos_ambiente (ambiente_id, nome_servico, grupo_servico, unidade_medida, quantidade_total_prevista, quantidade_executada, quantidade_restante) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [newEnv.lastInsertRowid, srv.nome_servico, srv.grupo_servico, srv.unidade_medida, srv.quantidade_total_prevista, 0, srv.quantidade_total_prevista]);
+            }
           }
         }
       }
@@ -1281,18 +1580,25 @@ app.use('/api/v2', apiRoutes);
   app.post("/api/copy/environments", requireAdmin, async (req, res) => {
     const { fromFloorId, toFloorId, toSectorId } = req.body;
     try {
-      const environments = await db.query("SELECT * FROM ambientes WHERE pavimento_id = ?", [fromFloorId]);
-      for (const env of environments) {
-        const newEnv = await db.run("INSERT INTO ambientes (setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [toSectorId, toFloorId, env.nome_ambiente + " (Cópia)", env.tipo_ambiente, env.area_total, env.piso, env.parede, env.teto, env.esquadrias, env.metais, env.loucas, env.descricao]);
-        
-        const services = await db.query("SELECT * FROM servicos_ambiente WHERE ambiente_id = ?", [env.id]);
-        for (const srv of services) {
-          await db.run("INSERT INTO servicos_ambiente (ambiente_id, nome_servico, grupo_servico, unidade_medida, quantidade_total_prevista, quantidade_executada, quantidade_restante) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [newEnv.lastInsertRowid, srv.nome_servico, srv.grupo_servico, srv.unidade_medida, srv.quantidade_total_prevista, 0, srv.quantidade_total_prevista]);
+      const units = await db.query("SELECT * FROM unidades WHERE pavimento_id = ?", [fromFloorId]);
+      for (const unit of units) {
+        const newUnit = await db.run("INSERT INTO unidades (categoria_id, pavimento_id, nome_unidade, descricao, ordem) VALUES (?, ?, ?, ?, ?)",
+          [unit.categoria_id, toFloorId, unit.nome_unidade + " (Cópia)", unit.descricao, unit.ordem]);
+
+        const environments = await db.query("SELECT * FROM ambientes WHERE unidade_id = ?", [unit.id]);
+        for (const env of environments) {
+          const newEnv = await db.run("INSERT INTO ambientes (unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao, ordem) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [newUnit.lastInsertRowid, env.tipo_ambiente_id, env.nome_ambiente, env.tipo_ambiente, env.area_total, env.piso, env.parede, env.teto, env.esquadrias, env.metais, env.loucas, env.descricao, env.ordem]);
+          
+          const services = await db.query("SELECT * FROM servicos_ambiente WHERE ambiente_id = ?", [env.id]);
+          for (const srv of services) {
+            await db.run("INSERT INTO servicos_ambiente (ambiente_id, nome_servico, grupo_servico, unidade_medida, quantidade_total_prevista, quantidade_executada, quantidade_restante) VALUES (?, ?, ?, ?, ?, ?, ?)",
+              [newEnv.lastInsertRowid, srv.nome_servico, srv.grupo_servico, srv.unidade_medida, srv.quantidade_total_prevista, 0, srv.quantidade_total_prevista]);
+          }
         }
       }
       res.json({ success: true });
+
     } catch (error) {
       res.status(500).json({ error: "Erro ao copiar ambientes" });
     }
@@ -1367,46 +1673,178 @@ app.use('/api/v2', apiRoutes);
     const info = await db.run("INSERT INTO categorias (local_id, nome_categoria) VALUES (?, ?)", [local_id, nome_categoria]);
     res.json({ id: info.lastInsertRowid });
   });
+  app.put("/api/categorias/:id", requireAdmin, async (req, res) => {
+    const { local_id, nome_categoria } = req.body;
+    await db.run("UPDATE categorias SET local_id = ?, nome_categoria = ? WHERE id = ?", [local_id, nome_categoria, req.params.id]);
+    res.json({ success: true });
+  });
 
   app.get("/api/unidades", async (req, res) => {
-    const { categoria_id } = req.query;
+    const { categoria_id, local_id, pavimento_id } = req.query;
     let sql = "SELECT * FROM unidades WHERE 1=1";
     const params = [];
     if (categoria_id) { sql += " AND categoria_id = ?"; params.push(categoria_id); }
+    if (local_id) { sql += " AND local_id = ?"; params.push(local_id); }
+    if (pavimento_id) { sql += " AND pavimento_id = ?"; params.push(pavimento_id); }
     sql += " ORDER BY ordem, nome_unidade";
     const data = await db.query(sql, params);
-    res.json(data);
+    
+    // Map database fields to frontend camelCase names if necessary, 
+    // but the frontend will likely handle the snake_case from SELECT *
+    // Actually, let's be consistent with what the frontend expects.
+    const mappedData = data.map((item: any) => ({
+      ...item,
+      name: item.nome_unidade,
+      perimetroAlvenaria: item.perimetro_alvenaria,
+      alturaAlvenaria: item.altura_alvenaria,
+      areaAlvenaria: item.area_alvenaria,
+      descontosAlvenaria: item.descontos_alvenaria,
+      areaAlvenariaTotal: item.area_alvenaria_total,
+      areaPiso: item.area_piso,
+      descontosPiso: item.descontos_piso,
+      areaPisoTotal: item.area_piso_total,
+      alturaContrapiso: item.altura_contrapiso,
+      revestimentoPisoJson: item.revestimento_piso_json,
+      perimetroRevestimentoParede: item.perimetro_revestimento_parede,
+      alturaRevestimentoParede: item.altura_revestimento_parede,
+      areaRevestimentoParede: item.area_revestimento_parede,
+      descontosRevestimentoParede: item.descontos_revestimento_parede,
+      areaRevestimentoParedeTotal: item.area_revestimento_parede_total,
+      revestimentoParedeJson: item.revestimento_parede_json,
+      hasDoors: !!item.tem_portas,
+      doorsJson: item.portas_json,
+      hasWindows: !!item.tem_janelas,
+      windowsJson: item.janelas_json,
+      hasBancada: !!item.tem_bancada,
+      bancadaJson: item.bancada_json,
+      hasDivisoria: !!item.tem_divisoria,
+      divisoriaJson: item.divisoria_json,
+      hasSoleira: !!item.tem_soleira,
+      soleiraJson: item.soleira_json,
+      hasDivbox: !!item.tem_divbox,
+      divboxJson: item.divbox_json,
+      hasHidrossanitario: !!item.tem_hidrossanitario,
+      hidrossanitarioJson: item.hidrossanitario_json,
+      hasEletrico: !!item.tem_eletrico,
+      eletricoJson: item.eletrico_json,
+      hasComunicacao: !!item.tem_comunicacao,
+      comunicacaoJson: item.comunicacao_json,
+      hasGuardaCorpo: !!item.tem_guarda_corpo,
+      guardaCorpoQty: item.guarda_corpo_quantidade,
+      hasArCondicionado: !!item.tem_ar_condicionado,
+      arCondicionadoQty: item.ar_condicionado_quantidade
+    }));
+    
+    res.json(mappedData);
   });
 
   app.post("/api/unidades", requireAdmin, async (req, res) => {
-    const { categoria_id, nome_unidade, descricao } = req.body;
-    const info = await db.run("INSERT INTO unidades (categoria_id, nome_unidade, descricao) VALUES (?, ?, ?)", [categoria_id, nome_unidade, descricao]);
+    const { 
+      categoria_id, local_id, pavimento_id, nome_unidade, descricao, name,
+      perimetroAlvenaria, alturaAlvenaria, areaAlvenaria, descontosAlvenaria, areaAlvenariaTotal,
+      areaPiso, descontosPiso, areaPisoTotal, alturaContrapiso, revestimentoPisoJson,
+      perimetroRevestimentoParede, alturaRevestimentoParede, areaRevestimentoParede, descontosRevestimentoParede, areaRevestimentoParedeTotal, revestimentoParedeJson,
+      hasDoors, doorsJson, hasWindows, windowsJson,
+      hasBancada, bancadaJson, hasDivisoria, divisoriaJson,
+      hasSoleira, soleiraJson, hasDivbox, divboxJson,
+      hasHidrossanitario, hidrossanitarioJson,
+      hasEletrico, eletricoJson,
+      hasComunicacao, comunicacaoJson,
+      hasGuardaCorpo, guardaCorpoQty,
+      hasArCondicionado, arCondicionadoQty
+    } = req.body;
+    const nome = nome_unidade || name;
+    
+    const sql = `
+      INSERT INTO unidades (
+        categoria_id, local_id, pavimento_id, nome_unidade, descricao,
+        perimetro_alvenaria, altura_alvenaria, area_alvenaria, descontos_alvenaria, area_alvenaria_total,
+        area_piso, descontos_piso, area_piso_total, altura_contrapiso, revestimento_piso_json,
+        perimetro_revestimento_parede, altura_revestimento_parede, area_revestimento_parede, descontos_revestimento_parede, area_revestimento_parede_total, revestimento_parede_json,
+        tem_portas, portas_json, tem_janelas, janelas_json,
+        tem_bancada, bancada_json, tem_divisoria, divisoria_json,
+        tem_soleira, soleira_json, tem_divbox, divbox_json,
+        tem_hidrossanitario, hidrossanitario_json,
+        tem_eletrico, eletrico_json,
+        tem_comunicacao, comunicacao_json,
+        tem_guarda_corpo, guarda_corpo_quantidade,
+        tem_ar_condicionado, ar_condicionado_quantidade
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+    
+    const params = [
+      categoria_id, local_id, pavimento_id, nome, descricao,
+      perimetroAlvenaria, alturaAlvenaria, areaAlvenaria, descontosAlvenaria, areaAlvenariaTotal,
+      areaPiso, descontosPiso, areaPisoTotal, alturaContrapiso, revestimentoPisoJson,
+      perimetroRevestimentoParede, alturaRevestimentoParede, areaRevestimentoParede, descontosRevestimentoParede, areaRevestimentoParedeTotal, revestimentoParedeJson,
+      hasDoors ? 1 : 0, doorsJson, hasWindows ? 1 : 0, windowsJson,
+      hasBancada ? 1 : 0, bancadaJson, hasDivisoria ? 1 : 0, divisoriaJson,
+      hasSoleira ? 1 : 0, soleiraJson, hasDivbox ? 1 : 0, divboxJson,
+      hasHidrossanitario ? 1 : 0, hidrossanitarioJson,
+      hasEletrico ? 1 : 0, eletricoJson,
+      hasComunicacao ? 1 : 0, comunicacaoJson,
+      hasGuardaCorpo ? 1 : 0, guardaCorpoQty,
+      hasArCondicionado ? 1 : 0, arCondicionadoQty
+    ];
+    
+    const info = await db.run(sql, params);
     res.json({ id: info.lastInsertRowid });
   });
 
-  app.get("/api/ambientes", async (req, res) => {
-    const { unidade_id } = req.query;
-    let sql = "SELECT * FROM ambientes WHERE 1=1";
-    const params = [];
-    if (unidade_id) { sql += " AND unidade_id = ?"; params.push(unidade_id); }
-    sql += " ORDER BY ordem, nome_ambiente";
-    const data = await db.query(sql, params);
-    res.json(data);
-  });
-
-  app.post("/api/ambientes", requireAdmin, async (req, res) => {
-    const { unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao } = req.body;
-    const info = await db.run("INSERT INTO ambientes (unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-      [unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente || 'SALA', area_total, piso, parede, teto, esquadrias, metais, loucas, descricao]);
-    res.json({ id: info.lastInsertRowid });
-  });
-
-  app.put("/api/ambientes/:id", requireAdmin, async (req, res) => {
-    const { unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao } = req.body;
-    await db.run("UPDATE ambientes SET unidade_id = ?, tipo_ambiente_id = ?, nome_ambiente = ?, tipo_ambiente = ?, area_total = ?, piso = ?, parede = ?, teto = ?, esquadrias = ?, metais = ?, loucas = ?, descricao = ? WHERE id = ?", 
-      [unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao, req.params.id]);
+  app.put("/api/unidades/:id", requireAdmin, async (req, res) => {
+    const { 
+      categoria_id, local_id, pavimento_id, nome_unidade, descricao, name,
+      perimetroAlvenaria, alturaAlvenaria, areaAlvenaria, descontosAlvenaria, areaAlvenariaTotal,
+      areaPiso, descontosPiso, areaPisoTotal, alturaContrapiso, revestimentoPisoJson,
+      perimetroRevestimentoParede, alturaRevestimentoParede, areaRevestimentoParede, descontosRevestimentoParede, areaRevestimentoParedeTotal, revestimentoParedeJson,
+      hasDoors, doorsJson, hasWindows, windowsJson,
+      hasBancada, bancadaJson, hasDivisoria, divisoriaJson,
+      hasSoleira, soleiraJson, hasDivbox, divboxJson,
+      hasHidrossanitario, hidrossanitarioJson,
+      hasEletrico, eletricoJson,
+      hasComunicacao, comunicacaoJson,
+      hasGuardaCorpo, guardaCorpoQty,
+      hasArCondicionado, arCondicionadoQty
+    } = req.body;
+    const nome = nome_unidade || name;
+    
+    const sql = `
+      UPDATE unidades SET 
+        categoria_id = ?, local_id = ?, pavimento_id = ?, nome_unidade = ?, descricao = ?,
+        perimetro_alvenaria = ?, altura_alvenaria = ?, area_alvenaria = ?, descontos_alvenaria = ?, area_alvenaria_total = ?,
+        area_piso = ?, descontos_piso = ?, area_piso_total = ?, altura_contrapiso = ?, revestimento_piso_json = ?,
+        perimetro_revestimento_parede = ?, altura_revestimento_parede = ?, area_revestimento_parede = ?, descontos_revestimento_parede = ?, area_revestimento_parede_total = ?, revestimento_parede_json = ?,
+        tem_portas = ?, portas_json = ?, tem_janelas = ?, janelas_json = ?,
+        tem_bancada = ?, bancada_json = ?, tem_divisoria = ?, divisoria_json = ?,
+        tem_soleira = ?, soleira_json = ?, tem_divbox = ?, divbox_json = ?,
+        tem_hidrossanitario = ?, hidrossanitario_json = ?,
+        tem_eletrico = ?, eletrico_json = ?,
+        tem_comunicacao = ?, comunicacao_json = ?,
+        tem_guarda_corpo = ?, guarda_corpo_quantidade = ?,
+        tem_ar_condicionado = ?, ar_condicionado_quantidade = ?
+      WHERE id = ?
+    `;
+    
+    const params = [
+      categoria_id, local_id, pavimento_id, nome, descricao,
+      perimetroAlvenaria, alturaAlvenaria, areaAlvenaria, descontosAlvenaria, areaAlvenariaTotal,
+      areaPiso, descontosPiso, areaPisoTotal, alturaContrapiso, revestimentoPisoJson,
+      perimetroRevestimentoParede, alturaRevestimentoParede, areaRevestimentoParede, descontosRevestimentoParede, areaRevestimentoParedeTotal, revestimentoParedeJson,
+      hasDoors ? 1 : 0, doorsJson, hasWindows ? 1 : 0, windowsJson,
+      hasBancada ? 1 : 0, bancadaJson, hasDivisoria ? 1 : 0, divisoriaJson,
+      hasSoleira ? 1 : 0, soleiraJson, hasDivbox ? 1 : 0, divboxJson,
+      hasHidrossanitario ? 1 : 0, hidrossanitarioJson,
+      hasEletrico ? 1 : 0, eletricoJson,
+      hasComunicacao ? 1 : 0, comunicacaoJson,
+      hasGuardaCorpo ? 1 : 0, guardaCorpoQty,
+      hasArCondicionado ? 1 : 0, arCondicionadoQty,
+      req.params.id
+    ];
+    
+    await db.run(sql, params);
     res.json({ success: true });
   });
+
 
   app.get("/api/setores", async (req, res) => {
     const { page, limit, offset } = getPagination(req);
@@ -1447,32 +1885,27 @@ app.use('/api/v2', apiRoutes);
   app.delete("/api/setores/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
-      await db.run(`DELETE FROM servicos_ambiente WHERE ambiente_id IN (
-        SELECT id FROM ambientes WHERE unidade_id IN (
-          SELECT id FROM unidades WHERE categoria_id IN (
-            SELECT id FROM categorias WHERE local_id IN (
-              SELECT id FROM locais WHERE setor_id = ?
-            )
-          )
-        )
-      )`, [id]);
-      await db.run(`DELETE FROM ambientes WHERE unidade_id IN (
-        SELECT id FROM unidades WHERE categoria_id IN (
-          SELECT id FROM categorias WHERE local_id IN (
-            SELECT id FROM locais WHERE setor_id = ?
-          )
-        )
-      )`, [id]);
-      await db.run(`DELETE FROM unidades WHERE categoria_id IN (
-        SELECT id FROM categorias WHERE local_id IN (
-          SELECT id FROM locais WHERE setor_id = ?
-        )
-      )`, [id]);
-      await db.run(`DELETE FROM categorias WHERE local_id IN (
-        SELECT id FROM locais WHERE setor_id = ?
-      )`, [id]);
+      // Cascading delete: Setor -> Locais -> Categorias -> Unidades
+      // AND Setor -> Pavimentos -> Unidades
+      
+      // 1. Delete Unidades linked to Categorias linked to Locais linked to Setor
+      await db.run("DELETE FROM unidades WHERE categoria_id IN (SELECT id FROM categorias WHERE local_id IN (SELECT id FROM locais WHERE setor_id = ?))", [id]);
+      
+      // 2. Delete Categorias linked to Locais linked to Setor
+      await db.run("DELETE FROM categorias WHERE local_id IN (SELECT id FROM locais WHERE setor_id = ?)", [id]);
+      
+      // 3. Delete Locais linked to Setor
       await db.run("DELETE FROM locais WHERE setor_id = ?", [id]);
+      
+      // 4. Delete Unidades linked to Pavimentos linked to Setor
+      await db.run("DELETE FROM unidades WHERE pavimento_id IN (SELECT id FROM pavimentos WHERE setor_id = ?)", [id]);
+      
+      // 5. Delete Pavimentos linked to Setor
+      await db.run("DELETE FROM pavimentos WHERE setor_id = ?", [id]);
+      
+      // 6. Delete Setor
       await db.run("DELETE FROM setores WHERE id = ?", [id]);
+      
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: "Erro ao excluir setor: " + error.message });
@@ -1602,9 +2035,7 @@ app.use('/api/v2', apiRoutes);
   app.delete("/api/pavimentos/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
-      // Cascading delete: Environments -> Floor
-      await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id IN (SELECT id FROM ambientes WHERE pavimento_id = ?)", [id]);
-      await db.run("DELETE FROM ambientes WHERE pavimento_id = ?", [id]);
+      // Cascading delete: Pavimento -> Unidades
       await db.run("DELETE FROM unidades WHERE pavimento_id = ?", [id]);
       await db.run("DELETE FROM pavimentos WHERE id = ?", [id]);
       res.json({ success: true });
@@ -1613,44 +2044,15 @@ app.use('/api/v2', apiRoutes);
     }
   });
 
-  app.get("/api/unidades", async (req, res) => {
-    const { pavimento_id } = req.query;
-    const { page, limit, offset } = getPagination(req);
-    
-    let sql = "SELECT * FROM unidades";
-    const params: any[] = [];
-    if (pavimento_id) { sql += " WHERE pavimento_id = ?"; params.push(pavimento_id); }
-    
-    const total = await db.queryOne(`SELECT COUNT(*) as count FROM (${sql}) as t`, params);
-    sql += ` ORDER BY ordem ASC, nome_unidade ASC LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
-    
-    const data = await db.query(sql, params);
-    res.json({ data, total: parseInt(total.count), page, limit });
-  });
-
   app.get("/api/unidades/:id", async (req, res) => {
     const data = await db.queryOne("SELECT * FROM unidades WHERE id = ?", [req.params.id]);
     if (data) res.json(data);
     else res.status(404).json({ error: "Unidade não encontrada" });
   });
 
-  app.post("/api/unidades", requireAdmin, async (req, res) => {
-    const { pavimento_id, nome_unidade, descricao } = req.body;
-    const info = await db.run("INSERT INTO unidades (pavimento_id, nome_unidade, descricao) VALUES (?, ?, ?)", [pavimento_id, nome_unidade, descricao]);
-    res.json({ id: info.lastInsertRowid });
-  });
-
-  app.put("/api/unidades/:id", requireAdmin, async (req, res) => {
-    const { pavimento_id, nome_unidade, descricao } = req.body;
-    await db.run("UPDATE unidades SET pavimento_id = ?, nome_unidade = ?, descricao = ? WHERE id = ?", [pavimento_id, nome_unidade, descricao, req.params.id]);
-    res.json({ success: true });
-  });
-
   app.delete("/api/unidades/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
-      await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id IN (SELECT id FROM ambientes WHERE unidade_id = ?)", [id]);
       await db.run("DELETE FROM ambientes WHERE unidade_id = ?", [id]);
       await db.run("DELETE FROM unidades WHERE id = ?", [id]);
       res.json({ success: true });
@@ -1659,31 +2061,36 @@ app.use('/api/v2', apiRoutes);
     }
   });
 
+  // Ambientes
   app.get("/api/ambientes", async (req, res) => {
-    const { pavimento_id, setor_id, unidade_id, sortField, sortOrder } = req.query;
-    const { page, limit, offset } = getPagination(req);
-    
-    const field = (sortField === 'nome_ambiente' || sortField === 'ordem') ? `a.${sortField}` : 'a.ordem';
-    const order = sortOrder === 'DESC' ? 'DESC' : 'ASC';
-
-    let sql = "SELECT a.*, s.nome_setor, p.nome_pavimento, u.nome_unidade FROM ambientes a JOIN setores s ON a.setor_id = s.id JOIN pavimentos p ON a.pavimento_id = p.id LEFT JOIN unidades u ON a.unidade_id = u.id WHERE 1=1";
+    const { unidade_id, limit } = req.query;
+    let sql = "SELECT * FROM ambientes WHERE 1=1";
     const params: any[] = [];
-    if (pavimento_id) { sql += " AND a.pavimento_id = ?"; params.push(pavimento_id); }
-    if (setor_id) { sql += " AND a.setor_id = ?"; params.push(setor_id); }
-    if (unidade_id) { sql += " AND a.unidade_id = ?"; params.push(unidade_id); }
-    
-    const total = await db.queryOne(`SELECT COUNT(*) as count FROM (${sql}) as t`, params);
-    sql += ` ORDER BY ${field} ${order}, a.nome_ambiente ASC LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
-    
+    if (unidade_id) { sql += " AND unidade_id = ?"; params.push(unidade_id); }
+    sql += " ORDER BY ordem ASC, nome_ambiente ASC";
+    if (limit) { sql += " LIMIT ?"; params.push(limit); }
     const data = await db.query(sql, params);
-    res.json({ data, total: parseInt(total.count), page, limit });
+    res.json(data);
   });
-  app.get("/api/ambientes/:id", async (req, res) => {
-    const data = await db.queryOne("SELECT a.*, s.nome_setor, p.nome_pavimento, u.nome_unidade FROM ambientes a JOIN setores s ON a.setor_id = s.id JOIN pavimentos p ON a.pavimento_id = p.id LEFT JOIN unidades u ON a.unidade_id = u.id WHERE a.id = ?", [req.params.id]);
-    if (data) res.json(data);
-    else res.status(404).json({ error: "Ambiente não encontrado" });
+
+  app.post("/api/ambientes", requireAdmin, async (req, res) => {
+    const { unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao } = req.body;
+    const info = await db.run(
+      "INSERT INTO ambientes (unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao]
+    );
+    res.json({ id: info.lastInsertRowid });
   });
+
+  app.put("/api/ambientes/:id", requireAdmin, async (req, res) => {
+    const { unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao } = req.body;
+    await db.run(
+      "UPDATE ambientes SET unidade_id = ?, tipo_ambiente_id = ?, nome_ambiente = ?, tipo_ambiente = ?, area_total = ?, piso = ?, parede = ?, teto = ?, esquadrias = ?, metais = ?, loucas = ?, descricao = ? WHERE id = ?",
+      [unidade_id, tipo_ambiente_id, nome_ambiente, tipo_ambiente, area_total, piso, parede, teto, esquadrias, metais, loucas, descricao, req.params.id]
+    );
+    res.json({ success: true });
+  });
+
   app.delete("/api/ambientes/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
@@ -1695,6 +2102,63 @@ app.use('/api/v2', apiRoutes);
     }
   });
 
+
+  app.post("/api/copy/:type/:id", requireAdmin, async (req, res) => {
+    const { type, id } = req.params;
+    const tableMap: Record<string, string> = {
+      obra: 'obras',
+      sector: 'setores',
+      local: 'locais',
+      unit: 'unidades',
+      employee: 'employees',
+      role: 'job_roles',
+      service: 'parametros_servico',
+      activity: 'atividades',
+      group: 'grupos_atividade'
+    };
+    
+    const table = tableMap[type];
+    if (!table) return res.status(400).json({ error: "Tipo inválido" });
+    
+    try {
+      const original = await db.queryOne(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+      if (!original) return res.status(404).json({ error: "Item não encontrado" });
+      
+      const { id: _, ...data } = original;
+      
+      // Handle specific column names for duplication feedback
+      const nameFields: Record<string, string> = {
+        obras: 'nome_obra',
+        setores: 'nome_setor',
+        locais: 'nome_local',
+        categorias: 'nome_categoria',
+        unidades: 'nome_unidade',
+        ambientes: 'nome_ambiente',
+        employees: 'name',
+        job_roles: 'name',
+        parametros_servico: 'nome',
+        atividades: 'nome_atividade',
+        grupos_atividade: 'nome_grupo'
+      };
+      
+      const nameField = nameFields[table];
+      if (nameField && data[nameField]) {
+        data[nameField] = `${data[nameField]} (Cópia)`;
+      }
+      
+      const keys = Object.keys(data);
+      const placeholders = keys.map(() => "?").join(", ");
+      const columns = keys.join(", ");
+      const values = keys.map(k => data[k]);
+      
+      const info = await db.run(`INSERT INTO ${table} (${columns}) VALUES (${placeholders})`, values);
+      res.json({ id: info.lastInsertRowid });
+    } catch (error: any) {
+      console.error("Erro ao copiar:", error);
+      res.status(500).json({ error: "Erro ao copiar: " + error.message });
+    }
+  });
+
   app.post("/api/reorder/:type", requireAdmin, async (req, res) => {
     const { type } = req.params;
     const { orders } = req.body; // Array of { id, ordem }
@@ -1703,6 +2167,8 @@ app.use('/api/v2', apiRoutes);
       obra: 'obras',
       sector: 'setores',
       floor: 'pavimentos',
+      local: 'locais',
+      category: 'categorias',
       unit: 'unidades',
       env: 'ambientes'
     };
@@ -1731,8 +2197,8 @@ app.use('/api/v2', apiRoutes);
     try {
       if (type === 'obra') {
         for (const id of ids) {
-          await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id IN (SELECT id FROM ambientes WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?))", [id]);
-          await db.run("DELETE FROM ambientes WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?)", [id]);
+          await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id IN (SELECT id FROM ambientes WHERE unidade_id IN (SELECT id FROM unidades WHERE pavimento_id IN (SELECT id FROM pavimentos WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?))))", [id]);
+          await db.run("DELETE FROM ambientes WHERE unidade_id IN (SELECT id FROM unidades WHERE pavimento_id IN (SELECT id FROM pavimentos WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?)))", [id]);
           await db.run("DELETE FROM unidades WHERE pavimento_id IN (SELECT id FROM pavimentos WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?))", [id]);
           await db.run("DELETE FROM pavimentos WHERE setor_id IN (SELECT id FROM setores WHERE obra_id = ?)", [id]);
           await db.run("DELETE FROM setores WHERE obra_id = ?", [id]);
@@ -1740,16 +2206,16 @@ app.use('/api/v2', apiRoutes);
         }
       } else if (type === 'sector') {
         for (const id of ids) {
-          await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id IN (SELECT id FROM ambientes WHERE setor_id = ?)", [id]);
-          await db.run("DELETE FROM ambientes WHERE setor_id = ?", [id]);
+          await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id IN (SELECT id FROM ambientes WHERE unidade_id IN (SELECT id FROM unidades WHERE pavimento_id IN (SELECT id FROM pavimentos WHERE setor_id = ?)))", [id]);
+          await db.run("DELETE FROM ambientes WHERE unidade_id IN (SELECT id FROM unidades WHERE pavimento_id IN (SELECT id FROM pavimentos WHERE setor_id = ?))", [id]);
           await db.run("DELETE FROM unidades WHERE pavimento_id IN (SELECT id FROM pavimentos WHERE setor_id = ?)", [id]);
           await db.run("DELETE FROM pavimentos WHERE setor_id = ?", [id]);
           await db.run("DELETE FROM setores WHERE id = ?", [id]);
         }
       } else if (type === 'floor') {
         for (const id of ids) {
-          await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id IN (SELECT id FROM ambientes WHERE pavimento_id = ?)", [id]);
-          await db.run("DELETE FROM ambientes WHERE pavimento_id = ?", [id]);
+          await db.run("DELETE FROM servicos_ambiente WHERE ambiente_id IN (SELECT id FROM ambientes WHERE unidade_id IN (SELECT id FROM unidades WHERE pavimento_id = ?))", [id]);
+          await db.run("DELETE FROM ambientes WHERE unidade_id IN (SELECT id FROM unidades WHERE pavimento_id = ?)", [id]);
           await db.run("DELETE FROM unidades WHERE pavimento_id = ?", [id]);
           await db.run("DELETE FROM pavimentos WHERE id = ?", [id]);
         }
@@ -1810,10 +2276,20 @@ app.use('/api/v2', apiRoutes);
           floorId = floor.id;
         }
 
-        // 3. Create Environment
+        // 3. Find or create Unit
+        let unit = await db.queryOne("SELECT id FROM unidades WHERE pavimento_id = ? AND nome_unidade = ?", [floorId, envName]);
+        let unitId;
+        if (!unit) {
+          const info = await db.run("INSERT INTO unidades (pavimento_id, nome_unidade) VALUES (?, ?)", [floorId, envName]);
+          unitId = info.lastInsertRowid;
+        } else {
+          unitId = unit.id;
+        }
+
+        // 4. Create Environment
         await db.run(
-          "INSERT INTO ambientes (setor_id, pavimento_id, nome_ambiente, tipo_ambiente, area_total, teto, parede, descricao) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-          [sectorId, floorId, envName, envType, areaPiso, areaTeto, areaParede, descricao]
+          "INSERT INTO ambientes (unidade_id, nome_ambiente, tipo_ambiente, area_total, teto, parede, descricao) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [unitId, envName, envType, areaPiso, areaTeto, areaParede, descricao]
         );
         count++;
       }
@@ -2335,16 +2811,30 @@ app.use('/api/v2', apiRoutes);
     res.json({ success: true });
   });
 
-  // Vite
+  // Vite middleware
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res) => res.sendFile(path.join(__dirname, "dist", "index.html")));
+    app.use(express.static(path.join(_dirname, "dist")));
+    app.get("*", (req, res) => res.sendFile(path.join(_dirname, "dist", "index.html")));
   }
 
-  app.listen(3000, "0.0.0.0", () => console.log(`Server running on port 3000`));
+  // Bind server port after all routes and Vite middleware are mounted
+  app.listen(PORT, "0.0.0.0", async () => {
+    console.log(`🚀 Server listening on port ${PORT}`);
+    try {
+      await connectToDatabase();
+      await initDb();
+      console.log("✅ Database initialized successfully");
+      loadGoogleTokens().catch((err) => console.error("❌ Error loading Google tokens:", err));
+    } catch (err) {
+      console.error("❌ Database initialization error:", err);
+    }
+  });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error("❌ FAILED TO START SERVER:", err);
+  process.exit(1);
+});

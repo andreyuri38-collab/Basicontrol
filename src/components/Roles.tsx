@@ -4,6 +4,7 @@ import {
   Plus, 
   Pencil, 
   Trash2, 
+  Copy,
   X, 
   DollarSign, 
   Calendar,
@@ -94,6 +95,15 @@ export default function Roles({ userRole }: { userRole?: string }) {
     setIsDeleteModalOpen(true);
   };
 
+  const handleCopy = (role: JobRole) => {
+    fetch(`/api/copy/role/${role.id}`, {
+      method: 'POST',
+      headers: { 'x-user-role': userRole || '' }
+    }).then(res => {
+      if (res.ok) fetchRoles(currentPage);
+    });
+  };
+
   const confirmDelete = () => {
     if (!roleToDelete) return;
     fetch(`/api/job-roles/${roleToDelete.id}`, {
@@ -152,12 +162,21 @@ export default function Roles({ userRole }: { userRole?: string }) {
                     <button 
                       onClick={() => handleEdit(role)}
                       className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                      title="Editar"
                     >
                       <Pencil size={18} />
                     </button>
                     <button 
+                      onClick={() => handleCopy(role)}
+                      className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all"
+                      title="Copiar"
+                    >
+                      <Copy size={18} />
+                    </button>
+                    <button 
                       onClick={() => handleDelete(role)}
                       className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                      title="Excluir"
                     >
                       <Trash2 size={18} />
                     </button>

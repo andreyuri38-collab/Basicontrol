@@ -74,15 +74,21 @@ export default function Dashboard() {
   useEffect(() => {
     fetch('/api/stats')
       .then(res => res.json())
-      .then(setStats);
+      .then(data => {
+        if (!data.error) setStats(data);
+      });
 
     fetch('/api/progress-details')
       .then(res => res.json())
-      .then(setProgressDetails);
+      .then(data => {
+        if (!data.error) setProgressDetails(data);
+      });
 
     fetch('/api/dashboard-extended')
       .then(res => res.json())
-      .then(setExtendedData);
+      .then(data => {
+        if (!data.error) setExtendedData(data);
+      });
 
     fetchChecklists(currentChecklistPage);
   }, [currentChecklistPage]);

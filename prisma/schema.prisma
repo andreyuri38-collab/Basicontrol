@@ -6,8 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:../obra_control.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -94,9 +94,32 @@ model Sector {
   description String?  @map("descricao")
 
   floors     Floor[]
+  locais     Local[]
   environments Environment[]
 
   @@map("setores")
+}
+
+model Local {
+  id          Int      @id @default(autoincrement())
+  sectorId    Int      @map("setor_id")
+  name        String   @map("nome_local")
+  type        String?  @default("Individual")
+  totalArea   Float?   @map("area_total")
+  piso        String?
+  parede      String?
+  teto        String?
+  esquadrias  String?
+  metais      String?
+  loucas      String?
+  description String?  @map("descricao")
+  order       Int      @default(0) @map("ordem")
+  createdAt   DateTime @default(now()) @map("data_criacao")
+
+  sector      Sector   @relation(fields: [sectorId], references: [id])
+  units       Unit[]
+
+  @@map("locais")
 }
 
 model Floor {
@@ -106,9 +129,76 @@ model Floor {
   description String?  @map("descricao")
 
   sector      Sector   @relation(fields: [sectorId], references: [id])
+  units       Unit[]
   environments Environment[]
 
   @@map("pavimentos")
+}
+
+model Unit {
+  id          Int      @id @default(autoincrement())
+  floorId     Int?     @map("pavimento_id")
+  localId     Int?     @map("local_id")
+  name        String   @map("nome_unidade")
+  descricao   String?
+  order       Int      @default(0) @map("ordem")
+  createdAt   DateTime @default(now()) @map("data_criacao")
+  
+  // Alvenaria
+  perimetroAlvenaria Float? @map("perimetro_alvenaria")
+  alturaAlvenaria    Float? @map("altura_alvenaria")
+  areaAlvenaria      Float? @map("area_alvenaria")
+  descontosAlvenaria Float? @map("descontos_alvenaria")
+  areaAlvenariaTotal Float? @map("area_alvenaria_total")
+  
+  // Piso
+  areaPiso           Float? @map("area_piso")
+  descontosPiso      Float? @map("descontos_piso")
+  areaPisoTotal      Float? @map("area_piso_total")
+  alturaContrapiso   Float? @map("altura_contrapiso")
+  revestimentoPisoJson String? @map("revestimento_piso_json")
+  
+  // Revestimento de Parede
+  perimetroRevestimentoParede Float? @map("perimetro_revestimento_parede")
+  alturaRevestimentoParede    Float? @map("altura_revestimento_parede")
+  areaRevestimentoParede      Float? @map("area_revestimento_parede")
+  descontosRevestimentoParede Float? @map("descontos_revestimento_parede")
+  areaRevestimentoParedeTotal Float? @map("area_revestimento_parede_total")
+  revestimentoParedeJson      String? @map("revestimento_parede_json")
+  
+  // Portas e Janelas
+  hasDoors          Boolean @default(false) @map("tem_portas")
+  doorsJson         String? @map("portas_json")
+  hasWindows        Boolean @default(false) @map("tem_janelas")
+  windowsJson       String? @map("windows_json")
+  
+  // Granito
+  hasBancada        Boolean @default(false) @map("tem_bancada")
+  bancadaJson       String? @map("bancada_json")
+  hasDivisoria      Boolean @default(false) @map("tem_divisoria")
+  divisoriaJson     String? @map("divisoria_json")
+  hasSoleira        Boolean @default(false) @map("tem_soleira")
+  soleiraJson       String? @map("soleira_json")
+  hasDivbox         Boolean @default(false) @map("tem_divbox")
+  divboxJson        String? @map("divbox_json")
+  
+  // Instalações
+  hasHidrossanitario Boolean @default(false) @map("tem_hidrossanitario")
+  hidrossanitarioJson String? @map("hidrossanitario_json")
+  hasEletrico        Boolean @default(false) @map("tem_eletrico")
+  eletricoJson       String? @map("eletrico_json")
+  hasComunicacao     Boolean @default(false) @map("tem_comunicacao")
+  comunicacaoJson    String? @map("comunicacao_json")
+  
+  hasGuardaCorpo     Boolean @default(false) @map("tem_guarda_corpo")
+  guardaCorpoQty     Int?    @map("guarda_corpo_quantidade")
+  hasArCondicionado  Boolean @default(false) @map("tem_ar_condicionado")
+  arCondicionadoQty  Int?    @map("ar_condicionado_quantidade")
+
+  floor       Floor?    @relation(fields: [floorId], references: [id])
+  local       Local?    @relation(fields: [localId], references: [id])
+  
+  @@map("unidades")
 }
 
 model Environment {

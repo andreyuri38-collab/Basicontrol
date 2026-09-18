@@ -1,0 +1,94 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn() && request.auth.token.email == "andreyuri38@gmail.com";
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+
+    // Connection test document for boot verification
+    match /test/connection {
+      allow read: if true;
+    }
+
+    // Users profile collection
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create, update: if isSignedIn() && (
+        isBootstrappedAdmin() || isAdmin() || request.auth.uid == userId
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Works and nested frentes
+    match /works/{workId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+
+      match /frentes/{frenteId} {
+        allow read: if isSignedIn();
+        allow write: if isAdmin();
+      }
+    }
+
+    // Top-level frentes collection (allows direct real-time listeners across all works)
+    match /frentes/{frenteId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Employees collection: Campo can read (without editing)
+    match /employees/{employeeId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Equipments collection (Módulo de Equipamentos: Próprios, Locados, Bombeamento)
+    match /equipments/{equipmentId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Schedules (Programação por dias)
+    match /schedules/{scheduleId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    // Productivity logs (Apontamento de produtividade)
+    match /productivity/{logId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    // Financial: strictly restricted to Admin (Módulo 5)
+    match /financial/{financialId} {
+      allow read, write: if isAdmin();
+    }
+
+    // General settings
+    match /settings/{settingsId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}

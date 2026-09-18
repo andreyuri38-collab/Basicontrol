@@ -12,6 +12,7 @@ import {
   X as XIcon,
   Pencil,
   Trash2,
+  Copy,
   CheckCircle2,
   XCircle,
   Camera as CameraIcon,
@@ -209,6 +210,15 @@ export default function Employees({ userRole }: EmployeesProps) {
       setLinkedRecords(null);
     }
     setIsDeleteModalOpen(true);
+  };
+
+  const handleCopy = (employee: any) => {
+    fetch(`/api/copy/employee/${employee.id}`, {
+      method: 'POST',
+      headers: { 'x-user-role': userRole || '' }
+    }).then(res => {
+      if (res.ok) fetchEmployees(currentPage);
+    });
   };
 
   const confirmDelete = () => {
@@ -552,6 +562,13 @@ export default function Employees({ userRole }: EmployeesProps) {
                   title="Editar"
                 >
                   <Pencil size={18} />
+                </button>
+                <button 
+                  onClick={() => handleCopy(employee)}
+                  className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all"
+                  title="Copiar"
+                >
+                  <Copy size={18} />
                 </button>
                 <button 
                   onClick={() => handleDelete(employee)}

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    <linearGradient id="orangeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f97316" />
+      <stop offset="100%" stop-color="#ea580c" />
+    </linearGradient>
+  </defs>
+  <!-- Background with slight rounding -->
+  <rect width="512" height="512" rx="110" fill="url(#bgGrad)" />
+  
+  <!-- Leveling guide lines & precision ruler marks -->
+  <path d="M 96 340 L 416 340" stroke="#475569" stroke-width="8" stroke-linecap="round" stroke-dasharray="16 12" />
+  
+  <!-- Screed base / concrete layer -->
+  <path d="M 80 370 L 432 370 C 440 370 448 378 448 388 L 448 406 C 448 416 440 424 432 424 L 80 424 C 72 424 64 416 64 406 L 64 388 C 64 378 72 370 80 370 Z" fill="#334155" />
+  
+  <!-- Level laser beam (Orange) -->
+  <path d="M 80 290 L 432 290" stroke="url(#orangeGrad)" stroke-width="12" stroke-linecap="round" />
+  
+  <!-- Bubble level indicator chamber -->
+  <rect x="136" y="190" width="240" height="70" rx="35" fill="#1e293b" stroke="#f97316" stroke-width="8" />
+  <!-- Graduation lines -->
+  <line x1="220" y1="190" x2="220" y2="260" stroke="#f97316" stroke-width="4" stroke-dasharray="6 6" />
+  <line x1="292" y1="190" x2="292" y2="260" stroke="#f97316" stroke-width="4" stroke-dasharray="6 6" />
+  <!-- Centered level bubble -->
+  <circle cx="256" cy="225" r="22" fill="url(#orangeGrad)" />
+  <circle cx="250" cy="218" r="6" fill="#ffffff" opacity="0.8" />
+  
+  <!-- Monogram / N shape for Nivelar -->
+  <path d="M 176 140 L 176 96 L 226 96 L 286 140 L 286 96 L 336 96 L 336 140" fill="none" stroke="#f8fafc" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" />
+</svg>
