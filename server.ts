@@ -14,8 +14,7 @@ import { Readable } from "stream";
 import { parse, isValid, format, addDays } from "date-fns";
 import apiRoutes from './backend/routes/index.ts';
 
-const _filename = typeof __filename !== 'undefined' ? __filename : (import.meta && import.meta.url ? fileURLToPath(import.meta.url) : '');
-const _dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(_filename);
+const _dirname = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 
 // Database Configuration
 let DATABASE_URL = process.env.DATABASE_URL;
@@ -889,11 +888,11 @@ async function saveGoogleTokens(tokens: any) {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   app.use(express.json());
 
   // Health check
-  app.get("/api/health", (req, res) => {
+  app.get(["/health", "/healthz", "/api/health"], (req, res) => {
     res.json({ status: "ok" });
   });
 
@@ -2811,13 +2810,23 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // Vite middleware
+  // Static files & SPA fallback
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.join(_dirname, "dist")));
-    app.get("*", (req, res) => res.sendFile(path.join(_dirname, "dist", "index.html")));
+    const distDir = fs.existsSync(path.join(_dirname, "index.html"))
+      ? _dirname
+      : (fs.existsSync(path.join(_dirname, "dist", "index.html"))
+          ? path.join(_dirname, "dist")
+          : path.join(process.cwd(), "dist"));
+
+    console.log(`📁 Serving static files from: ${distDir}`);
+    app.use(express.static(distDir));
+    app.get("*", (req, res) => {
+      const indexPath = path.join(distDir, "index.html");
+      res.sendFile(indexPath);
+    });
   }
 
   // Bind server port after all routes and Vite middleware are mounted
